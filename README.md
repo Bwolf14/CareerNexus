@@ -9,8 +9,8 @@ To connect your application or DBeaver to the database, use the following:
 * Host/IP Address: 192.168.200.56
 * Port: 3306
 * Database Name: careernexus_db
-* Username: root
-* Password: CareerNexPass32
+* Username: career_app_user
+* Password: dbSecur3d
 
 ### Team Workflow
 * Database Management: The database is running as a Docker container.
