@@ -1,5 +1,7 @@
+CREATE DATABASE IF NOT EXISTS careernexus_db;
+USE careernexus_db;
 CREATE USER IF NOT EXISTS 'career_app_user'@'%' IDENTIFIED BY 'dbSecur3d';
-GRANT SELECT, INSERT, UPDATE, DELETE ON careernexus_db.* TO 'career_app_user'@'%'
+GRANT SELECT, INSERT, UPDATE, DELETE ON careernexus_db.* TO 'career_app_user'@'%';
 FLUSH PRIVILEGES;
 CREATE TABLE IF NOT EXISTS jobs (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -19,5 +21,26 @@ CREATE TABLE IF NOT EXISTS job_skills (
     skill_id INT,
     PRIMARY KEY (job_id, skill_id),
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+    FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS user_resumes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    parsed_data JSON, 
+    upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS user_skills (
+    user_id INT,
+    skill_id INT,
+    PRIMARY KEY (user_id, skill_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
 );
