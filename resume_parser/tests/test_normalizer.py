@@ -67,6 +67,9 @@ def test_canonical_skill_key_collapses_spacing_but_keeps_compounds():
         ("03/2020", "2020-03"),
         ("01/15/2020", "2020-01"),
         ("13/2020", "2020"),          # invalid month -> year only
+        ("Sept '22", "2022-09"),      # apostrophe-abbreviated year
+        ("'22", "2022"),
+        ("'98", "1998"),              # POSIX pivot: 69-99 -> 1900s
         ("not a date", None),
     ],
 )
@@ -85,6 +88,7 @@ def test_normalize_date_token(token, expected):
         ("2021 - Current", "2021", None, True),
         ("Ongoing since 2015", "2015", None, False),  # single date, no range sep
         ("2017", "2017", None, False),
+        ("Sept '22 – Present", "2022-09", None, True),  # contracted year + present
     ],
 )
 def test_parse_date_range(text, start, end, current):

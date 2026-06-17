@@ -120,6 +120,48 @@ def test_sidebar_docx(samples):
     assert "JavaScript" in r.skills.raw
 
 
+def test_tricky_docx_real_world_edge_cases(samples):
+    r = parse_resume(samples["tricky.docx"])
+    assert r.metadata.section_detection_status == "success"
+
+    # Multi-line headers, contracted year, prose description, company-then-title
+    # -> three clean experience entries (no phantom date-only / prose entries).
+    assert len(r.experience) == 3
+    vertex, nimbus, crestline = r.experience
+    assert vertex.title == "Senior Cloud Engineer"
+    assert vertex.company == "Vertex Systems Inc."
+    assert vertex.dates.start_date == "2022-09"      # "Sept '22" parsed
+    assert vertex.dates.is_current is True
+    assert nimbus.title == "Infrastructure Specialist"
+    assert nimbus.company == "Nimbus Digital"
+    assert nimbus.dates.start_date == "2019-10" and nimbus.dates.end_date == "2021-02"
+    assert crestline.title == "IT Systems Administrator"
+    assert crestline.company == "Crestline Manufacturing Ltd."
+    assert any("Sole IT staff member" in d for d in crestline.description)
+
+    # Education: degree / field / institution / GPA all separated correctly.
+    assert len(r.education) == 1
+    edu = r.education[0]
+    assert edu.degree == "Bachelor of Technology"
+    assert edu.field_of_study == "Computer Systems"
+    assert edu.institution == "British Columbia Institute of Technology"
+    assert edu.gpa == "88%"
+
+    # Skills: category labels captured, parenthesized list kept intact, aliases
+    # canonicalized, and no label/fragment leakage into raw.
+    assert r.skills.categorized["Cloud & Infrastructure"][0] == "AWS (EC2, RDS, S3)"
+    assert "Kubernetes" in r.skills.raw and "k8s" not in r.skills.raw
+    assert "JavaScript" in r.skills.raw and "Node.js" in r.skills.raw
+    assert "Cloud & Infrastructure" not in r.skills.raw
+
+    # Certifications: each two-line block is one cert with the right issuer/date.
+    assert len(r.certifications) == 2
+    assert r.certifications[0].name == "AWS Certified Solutions Architect - Associate"
+    assert r.certifications[0].issuer == "Amazon Web Services"
+    assert r.certifications[0].date_earned == "2023-03"
+    assert r.certifications[0].expiration_date == "2026-03"
+
+
 def test_no_headers_docx_fails_gracefully(samples):
     r = parse_resume(samples["no_headers.docx"])
     assert r.metadata.section_detection_status == "failed"

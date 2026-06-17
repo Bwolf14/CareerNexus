@@ -168,12 +168,17 @@ _MONTH = (
     r"Dec(?:ember)?)"
 )
 
+# Apostrophe variants (straight + typographic) used in "Sept '22" / "'22".
+_APOS = r"['‘’]"
+
 # A single date token, longest forms first so the alternation prefers the
 # most specific match.
 _DATE_TOKEN = (
-    rf"(?:{_MONTH}\.?\s+\d{{4}}"      # Jan 2020 / January 2020
+    rf"(?:{_MONTH}\.?\s+\d{{4}}"       # Jan 2020 / January 2020
+    rf"|{_MONTH}\.?\s+{_APOS}\d{{2}}\b"  # Sept '22
     r"|\d{1,2}/\d{1,2}/\d{4}"          # 01/15/2020
     r"|\d{1,2}/\d{4}"                  # 01/2020
+    rf"|{_APOS}\d{{2}}\b"             # '22
     r"|\d{4})"                         # 2020
 )
 
@@ -191,6 +196,12 @@ _SINGLE_DATE_PATTERN = re.compile(_DATE_TOKEN, re.IGNORECASE)
 _PRESENT_FULL = re.compile(_PRESENT, re.IGNORECASE)
 
 
+def _expand_two_digit_year(yy: str) -> str:
+    """Expand a 2-digit year using the POSIX pivot (69-99 -> 1900s, 00-68 -> 2000s)."""
+    n = int(yy)
+    return str(1900 + n if n >= 69 else 2000 + n)
+
+
 def normalize_date_token(token: str) -> Optional[str]:
     """Normalize one date token to ``"YYYY-MM"`` or ``"YYYY"``; None if unparseable."""
     if not token:
@@ -199,6 +210,21 @@ def normalize_date_token(token: str) -> Optional[str]:
 
     if re.fullmatch(r"\d{4}", token):
         return token
+
+    # Apostrophe-abbreviated years: "'22" and "Sept '22".
+    m = re.fullmatch(rf"{_APOS}(\d{{2}})", token)
+    if m:
+        return _expand_two_digit_year(m.group(1))
+    m = re.fullmatch(rf"({_MONTH})\.?\s+{_APOS}(\d{{2}})", token, re.IGNORECASE)
+    if m:
+        year = _expand_two_digit_year(m.group(2))
+        try:
+            dt = _dateutil_parser.parse(
+                f"{m.group(1)} {year}", default=datetime(2000, 1, 1)
+            )
+            return f"{dt.year:04d}-{dt.month:02d}"
+        except (ValueError, OverflowError):
+            return year
 
     m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", token)
     if m:

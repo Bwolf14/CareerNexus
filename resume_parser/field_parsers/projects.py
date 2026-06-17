@@ -15,7 +15,7 @@ import re
 
 from ..normalizer import clean_text, parse_date_range
 from ..schema import Project
-from .common import group_entries, split_delim, split_header_description
+from .common import group_entries, join_header, split_delim, split_header_description
 from .contact import URL_RE
 
 _TECH_RE = re.compile(
@@ -29,7 +29,7 @@ def parse_projects(blocks, baseline, warnings: list[str]) -> list[Project]:
     projects: list[Project] = []
     for entry in group_entries(blocks, baseline, force_indent0=True):
         header, description_lines = split_header_description(entry)
-        header_text = " ".join(filter(None, (clean_text(b.text) for b in header)))
+        header_text = join_header(header)
 
         dates, remainder = parse_date_range(header_text)
 

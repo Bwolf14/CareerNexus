@@ -18,6 +18,7 @@ from ..schema import EducationEntry
 from .common import (
     backfill_dates,
     group_entries,
+    join_header,
     split_header_description,
     split_segments,
 )
@@ -51,7 +52,7 @@ def parse_education(blocks, baseline, warnings: list[str]) -> list[EducationEntr
     entries = []
     for entry in group_entries(blocks, baseline):
         header, _description = split_header_description(entry)
-        header_text = " ".join(filter(None, (clean_text(b.text) for b in header)))
+        header_text = join_header(header)
         entry_text = " ".join(filter(None, (clean_text(b.text) for b in entry)))
 
         dates, remainder = parse_date_range(header_text)
