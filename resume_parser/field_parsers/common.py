@@ -23,13 +23,48 @@ from .contact import LOCATION_RE
 _SIZE_TOLERANCE = 1.5
 
 
-def is_entry_start(b: TextBlock, baseline, force_indent0: bool = False) -> bool:
-    """Does *b* begin a new entry? (blueprint §8)
+def _at_body(b: TextBlock, baseline) -> bool:
+    return (
+        b.font_size is None
+        or baseline is None
+        or abs(b.font_size - baseline) <= _SIZE_TOLERANCE
+    )
 
-    Default rule: a left-margin, non-list, body-size block that is bold or
-    contains a date range. ``force_indent0`` (projects) relaxes this to "any
-    left-margin, non-list block", since project titles often have neither
-    bold nor a date.
+
+# A header line is a short noun phrase, usually with structural separators
+# ("Title | Company | City"); a description paragraph is markedly longer and
+# carries none. We avoid sentence-punctuation heuristics because resume headers
+# are riddled with abbreviation dots ("Inc.", "Ltd.", "No. 36").
+_PROSE_MIN_WORDS = 14
+_HEADER_SEPARATORS = "|—–·•"
+
+
+def _looks_like_prose(text: str) -> bool:
+    """A no-bullet description paragraph, vs. a short title/company header."""
+    t = text.strip()
+    if not t or any(sep in t for sep in _HEADER_SEPARATORS):
+        return False
+    return len(t.split()) >= _PROSE_MIN_WORDS
+
+
+def _is_parenthetical(text: str) -> bool:
+    """A line that is an aside wrapped in parentheses (not a new entry)."""
+    return clean_text(text).startswith("(")
+
+
+def _is_description_line(b: TextBlock) -> bool:
+    """Does this block carry description content rather than header fields?"""
+    if b.is_list_item or b.indentation_level > 0:
+        return True
+    return _looks_like_prose(b.text) or _is_parenthetical(b.text)
+
+
+def is_entry_start(b: TextBlock, baseline, force_indent0: bool = False) -> bool:
+    """A *strong*, unconditional entry start: a bold or dated line at the
+    left margin (blueprint §8). ``force_indent0`` (projects) relaxes this to
+    "any left-margin, non-list block", since project titles often have neither
+    bold nor a date. Multi-line headers and continuation lines are handled by
+    :func:`group_entries`, which has the surrounding context this lacks.
     """
     if b.is_list_item or b.indentation_level != 0:
         return False
@@ -40,43 +75,74 @@ def is_entry_start(b: TextBlock, baseline, force_indent0: bool = False) -> bool:
     )
 
 
-def _at_body(b: TextBlock, baseline) -> bool:
-    return (
-        b.font_size is None
-        or baseline is None
-        or abs(b.font_size - baseline) <= _SIZE_TOLERANCE
-    )
+def _is_entry_boundary(
+    b: TextBlock, baseline, seen_content: bool, seen_date: bool, force_indent0: bool
+) -> bool:
+    """Decide whether *b* begins a new entry, given what the current entry has
+    already absorbed.
+
+    The key idea is that an entry is a short *header block* (title / company /
+    date / location, possibly spread over several lines) followed by a
+    description. A new entry only begins on a strong signal:
+
+    * a **bold** body-size line at the margin (always), or
+    * once the current entry's header is *complete* — a date was captured, or
+      we're already into the description — a return to a margin, body-size line
+      that isn't itself prose/parenthetical description.
+
+    While the header is still open (no date and no description seen yet),
+    non-bold continuation lines — including the date line — *attach* to the
+    current entry instead of splitting it. (Projects are the exception: with
+    ``force_indent0`` a fresh, non-date line still starts a new entry, since
+    project titles carry no other signal.)
+    """
+    if b.is_list_item or b.indentation_level != 0:
+        return False
+    at_body = _at_body(b, baseline)
+    if at_body and b.is_bold:
+        return True
+
+    header_open = not seen_content and not seen_date
+    if header_open:
+        if force_indent0 and not _is_date_only(clean_text(b.text)):
+            return True
+        return False
+
+    if not at_body:
+        return False
+    if _looks_like_prose(b.text) or _is_parenthetical(b.text):
+        return False
+    return True
 
 
 def group_entries(blocks, baseline, force_indent0: bool = False) -> list[list[TextBlock]]:
-    """Group a section's blocks into entries.
+    """Group a section's blocks into entries (blueprint §8).
 
-    Besides the §8 rule (bold / date at the left margin), a block also starts
-    a new entry when text **returns to the left margin after indented or
-    bulleted content** — the reliable boundary signal for resumes that use no
-    bold and put dates on their own indented lines.
+    Tracks two facts about the entry under construction: whether a date range
+    has been captured (``seen_date``, which "completes" a header) and whether
+    description content has begun (``seen_content``). A header may therefore
+    span several lines — e.g. company, then title, then a separate date line —
+    without being torn into separate entries, while genuinely back-to-back
+    entries (title line, date line, next title line) still split correctly.
+    See :func:`_is_entry_boundary` for the rule.
     """
     entries: list[list[TextBlock]] = []
     current: list[TextBlock] = []
-    seen_indented = False
+    seen_content = False
+    seen_date = False
     for b in blocks:
-        start = is_entry_start(b, baseline, force_indent0)
-        if (
-            not start
-            and current
-            and seen_indented
-            and not b.is_list_item
-            and b.indentation_level == 0
-            and _at_body(b, baseline)
+        if current and _is_entry_boundary(
+            b, baseline, seen_content, seen_date, force_indent0
         ):
-            start = True
-        if start and current:
             entries.append(current)
             current = []
-            seen_indented = False
+            seen_content = False
+            seen_date = False
         current.append(b)
-        if b.is_list_item or b.indentation_level > 0:
-            seen_indented = True
+        if _is_description_line(b):
+            seen_content = True
+        elif b.indentation_level == 0 and DATE_RANGE_PATTERN.search(b.text):
+            seen_date = True
     if current:
         entries.append(current)
     return entries
@@ -124,7 +190,9 @@ def split_header_description(entry: list[TextBlock]) -> tuple[list[TextBlock], l
     raw: list[tuple[str, bool]] = []  # (text, is_list_item)
     in_desc = False
     for b in entry:
-        if not in_desc and (b.is_list_item or b.indentation_level > 0):
+        # Description begins at the first bullet/indented line, or — for resumes
+        # that write descriptions as plain paragraphs — the first prose line.
+        if not in_desc and header and _is_description_line(b):
             in_desc = True
         if in_desc:
             t = clean_text(b.text)
@@ -154,6 +222,17 @@ _SEGMENT_SPLIT_RE = re.compile(
 )
 
 
+def join_header(header_blocks: list[TextBlock]) -> str:
+    """Join header lines with a separator so each line stays a distinct segment.
+
+    A multi-line header ("Company" / "Title" / "Dates") would otherwise be
+    space-joined and lose its boundaries, merging e.g. a field-of-study line
+    into the institution line. The "|" delimiter is one ``split_segments``
+    already recognises.
+    """
+    return " | ".join(filter(None, (clean_text(b.text) for b in header_blocks)))
+
+
 def split_segments(text: str) -> list[str]:
     """Break a header remainder into candidate segments (title/company/etc.)."""
     if not text:
@@ -178,15 +257,33 @@ def extract_location(text: str) -> tuple[str | None, str]:
     return loc, remainder
 
 
-_DELIM_RE = re.compile(r"\s*[,;|]\s*|\s*[•·●▪‣]\s*")
+_DELIM_CHARS = ",;|•·●▪‣"
 
 
 def split_delim(text: str) -> list[str]:
     """Split a skills/technologies list on commas/semicolons/pipes/bullets.
 
-    Deliberately does NOT split on '+' or '/', so compound skill names like
-    'C++', 'CI/CD', and 'TCP/IP' survive intact.
+    Splitting is *parenthesis-aware*: delimiters inside brackets don't split, so
+    "AWS (EC2, RDS, S3)" stays one item instead of fragmenting. Deliberately
+    does NOT split on '+' or '/' either, so compound skill names like 'C++',
+    'CI/CD', and 'TCP/IP' survive intact.
     """
     if not text:
         return []
-    return [p.strip() for p in _DELIM_RE.split(text) if p and p.strip()]
+    parts: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch in "([{":
+            depth += 1
+            buf.append(ch)
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+            buf.append(ch)
+        elif depth == 0 and ch in _DELIM_CHARS:
+            parts.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    parts.append("".join(buf))
+    return [p.strip() for p in parts if p.strip()]

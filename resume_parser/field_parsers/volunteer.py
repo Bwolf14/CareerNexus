@@ -12,12 +12,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..normalizer import clean_text, parse_date_range
+from ..normalizer import parse_date_range
 from ..schema import VolunteerEntry
 from .common import (
     backfill_dates,
     extract_location,
     group_entries,
+    join_header,
     split_header_description,
     split_segments,
 )
@@ -40,7 +41,7 @@ def parse_volunteer(blocks, baseline, warnings: list[str]) -> list[VolunteerEntr
     entries = []
     for idx, entry in enumerate(group_entries(blocks, baseline), start=1):
         header, description = split_header_description(entry)
-        header_text = " ".join(filter(None, (clean_text(b.text) for b in header)))
+        header_text = join_header(header)
 
         dates, remainder = parse_date_range(header_text)
         dates = backfill_dates(dates, entry)

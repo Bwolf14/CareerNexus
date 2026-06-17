@@ -1,11 +1,13 @@
 """
 Skills parsing (blueprint §10).
 
-Handles the three common layouts:
+Handles the common layouts:
 
 * One long delimiter-separated block -> split into ``raw``.
 * ``Category: item, item, item`` lines -> populate ``categorized[Category]``
   *and* flatten into ``raw``.
+* A ``Category:`` label on its own line, with the items on the line(s) below
+  (very common in two-column / styled resumes) -> same result.
 * One-skill-per-bullet -> each line is a ``raw`` entry.
 
 Each skill is canonicalized (``normalize_skill``) so common variants — "JS" /
@@ -36,30 +38,55 @@ def parse_skills(blocks, warnings: list[str]) -> Skills:
             skills.raw.append(item)
         return item
 
+    def add_to(bucket, item) -> None:
+        canonical = add_raw(item)
+        if bucket is not None and canonical and canonical not in bucket:
+            bucket.append(canonical)
+
+    def is_label(text: str) -> bool:
+        return bool(text) and len(text.split()) <= _MAX_CATEGORY_WORDS
+
+    # A "Category:" label on its own line applies to the line(s) that follow.
+    pending_category: str | None = None
+
     for b in blocks:
         line = clean_text(b.text)
         if not line:
             continue
 
-        # "Category: a, b, c" — only when the label is short (avoids treating
-        # an ordinary sentence containing a colon as a category).
+        # Label-only line: "Cloud & Infrastructure:" with nothing after the colon.
+        if line.endswith(":"):
+            label = line[:-1].strip()
+            if is_label(label):
+                pending_category = label
+                skills.categorized.setdefault(label, [])
+                continue
+
+        # Inline "Category: a, b, c" — short label avoids treating an ordinary
+        # sentence containing a colon as a category.
         if ":" in line:
             label, _, rest = line.partition(":")
             label = label.strip()
             items = split_delim(rest.strip())
-            if label and items and len(label.split()) <= _MAX_CATEGORY_WORDS:
+            if items and is_label(label):
                 bucket = skills.categorized.setdefault(label, [])
                 for it in items:
-                    canonical = add_raw(it)
-                    if canonical and canonical not in bucket:
-                        bucket.append(canonical)
+                    add_to(bucket, it)
+                pending_category = None
                 continue
 
         items = split_delim(line)
+        if pending_category is not None:
+            bucket = skills.categorized.setdefault(pending_category, [])
+            for it in items or [line]:
+                add_to(bucket, it)
+            continue
         if len(items) > 1:
             for it in items:
                 add_raw(it)
         else:
             add_raw(line)
 
+    # Drop any label that never received items.
+    skills.categorized = {k: v for k, v in skills.categorized.items() if v}
     return skills

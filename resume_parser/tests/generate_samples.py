@@ -221,6 +221,65 @@ def make_sidebar_docx(path: str) -> None:
     doc.save(path)
 
 
+def make_tricky_docx(path: str) -> None:
+    """Real-world messiness in one file: multi-line entry headers, a contracted
+    year ("Sept '22"), a no-bullet prose description, a parenthetical aside, a
+    company-then-title order, skills as ``Category:`` labels on their own line
+    with a parenthesized comma-list, and two-line certifications."""
+    doc = Document()
+
+    title = doc.add_paragraph()
+    r = title.add_run("DEREK CALLOWAY")
+    r.bold = True
+    r.font.size = Pt(18)
+    doc.add_paragraph("North Vancouver, BC | d.calloway@example.com | (604) 555-4471")
+
+    doc.add_heading("Work Experience", level=1)
+
+    # Standard entry with a contracted-year date on its own line.
+    p = doc.add_paragraph()
+    p.add_run("Senior Cloud Engineer | Vertex Systems Inc. | North Vancouver, BC").bold = True
+    doc.add_paragraph("Sept '22 - Present", style=None)
+    doc.add_paragraph("Designed AWS infrastructure for 2M+ users.", style="List Bullet")
+
+    # Multi-line header: company line, then title line, then date line.
+    p = doc.add_paragraph()
+    p.add_run("Nimbus Digital - Cloud Practice").bold = True
+    doc.add_paragraph("Infrastructure Specialist")
+    doc.add_paragraph("Oct. 2019 - Feb 2021 | Vancouver, BC")
+    doc.add_paragraph("Managed Kubernetes clusters for 12 tenants.", style="List Bullet")
+
+    # Prose description (no bullets) + inline date line.
+    p = doc.add_paragraph()
+    p.add_run("IT Systems Administrator - Crestline Manufacturing Ltd.").bold = True
+    doc.add_paragraph("2017 to 2019 | Burnaby, BC")
+    doc.add_paragraph(
+        "Sole IT staff member responsible for the full environment including "
+        "Windows Server AD, the Office 365 tenant, VLAN segmentation, and the "
+        "site helpdesk, plus quarterly disaster-recovery testing."
+    )
+
+    doc.add_heading("Education", level=1)
+    p = doc.add_paragraph()
+    p.add_run("Bachelor of Technology - Computer Systems").bold = True
+    doc.add_paragraph("British Columbia Institute of Technology (BCIT) | Burnaby, BC")
+    doc.add_paragraph("2012 - 2016 | GPA: 88%")
+
+    doc.add_heading("Technical Skills", level=1)
+    doc.add_paragraph().add_run("Cloud & Infrastructure:").bold = True
+    doc.add_paragraph("AWS (EC2, RDS, S3) | k8s | Docker | Terraform")
+    doc.add_paragraph().add_run("Languages:").bold = True
+    doc.add_paragraph("Python 3.9; JS; NodeJS; Go")
+
+    doc.add_heading("Certifications", level=1)
+    doc.add_paragraph().add_run("AWS Certified Solutions Architect - Associate").bold = True
+    doc.add_paragraph("Amazon Web Services | Issued: March 2023 (Valid through March 2026)")
+    doc.add_paragraph().add_run("Certified Kubernetes Administrator (CKA)").bold = True
+    doc.add_paragraph("The Linux Foundation | 2022")
+
+    doc.save(path)
+
+
 def make_no_headers_docx(path: str) -> None:
     """Plain prose, no styled/bold/large headings -> 'failed' status path."""
     doc = Document()
@@ -246,6 +305,7 @@ _DOCX_BUILDERS = {
     "heading_styles.docx": make_heading_styles_docx,
     "manual_bold.docx": make_manual_bold_docx,
     "sidebar.docx": make_sidebar_docx,
+    "tricky.docx": make_tricky_docx,
     "no_headers.docx": make_no_headers_docx,
 }
 

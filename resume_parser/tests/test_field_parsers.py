@@ -116,6 +116,76 @@ def test_experience_extracts_location():
     assert exp[0].company == "Acme Inc."
 
 
+def test_experience_multiline_header_stays_one_entry():
+    # Company, title, and date each on their own line -> a single entry, with
+    # the date line attaching to the header instead of splitting it off.
+    blocks = [
+        block("Nimbus Digital — Cloud Practice", 0, font_size=11.0, is_bold=True),
+        block("Infrastructure Specialist", 1, font_size=11.0, is_italic=True),
+        block("Oct. 2019 – Feb 2021  ·  Vancouver, BC", 2, font_size=11.0, is_italic=True),
+        block("Ran the clusters.", 3, font_size=11.0, is_list_item=True, indentation_level=1),
+    ]
+    exp = parse_experience(blocks, BASELINE, [])
+    assert len(exp) == 1
+    assert exp[0].title == "Infrastructure Specialist"
+    assert exp[0].company == "Nimbus Digital"
+    assert exp[0].location == "Vancouver, BC"
+    assert exp[0].dates.start_date == "2019-10"
+    assert exp[0].dates.end_date == "2021-02"
+    assert exp[0].description == ["Ran the clusters."]
+
+
+def test_experience_back_to_back_no_bold_split_on_date():
+    # No bold; a captured date "completes" each header so the next title line
+    # begins a new entry.
+    blocks = [
+        block("Network Technician, Acme Inc.", 0, font_size=11.0),
+        block("2020 - 2021", 1, font_size=11.0),
+        block("Analyst, Globex Corp", 2, font_size=11.0),
+        block("2018 - 2020", 3, font_size=11.0),
+    ]
+    exp = parse_experience(blocks, BASELINE, [])
+    assert len(exp) == 2
+    assert exp[0].company == "Acme Inc." and exp[0].dates.start_date == "2020"
+    assert exp[1].company == "Globex Corp" and exp[1].dates.start_date == "2018"
+
+
+def test_experience_prose_description_no_bullets():
+    # A plain prose paragraph (no bullet, no indent) is the description, not a
+    # second entry — and must not be parsed as title/company.
+    blocks = [
+        block("IT Systems Administrator — Crestline Manufacturing Ltd.", 0, font_size=11.0, is_bold=True),
+        block("2017 to 2019  •  Burnaby, BC", 1, font_size=11.0, is_italic=True),
+        block(
+            "Sole IT staff member responsible for the full environment including "
+            "Windows Server AD, the Office 365 tenant, VLAN segmentation, and the "
+            "helpdesk for the whole site.",
+            2, font_size=11.0,
+        ),
+    ]
+    exp = parse_experience(blocks, BASELINE, [])
+    assert len(exp) == 1
+    assert exp[0].title == "IT Systems Administrator"
+    assert exp[0].company == "Crestline Manufacturing Ltd."
+    assert exp[0].location == "Burnaby, BC"
+    assert len(exp[0].description) == 1
+    assert exp[0].description[0].startswith("Sole IT staff member")
+
+
+def test_experience_parenthetical_aside_not_new_entry():
+    blocks = [
+        block("Helpdesk Analyst | Fraser Valley District", 0, font_size=11.0, is_bold=True),
+        block("March 2016 - Ongoing", 1, font_size=11.0, is_italic=True),
+        block("(Contract position, ended at rollout completion)", 2, font_size=11.0, is_italic=True),
+        block("Deployed 600+ Chromebooks.", 3, font_size=11.0, is_list_item=True, indentation_level=1),
+    ]
+    exp = parse_experience(blocks, BASELINE, [])
+    assert len(exp) == 1
+    assert exp[0].title == "Helpdesk Analyst"
+    assert exp[0].dates.start_date == "2016-03"
+    assert exp[0].dates.is_current is True
+
+
 # --------------------------------------------------------------------------
 # education — degree keywords, institution, field, GPA formats
 # --------------------------------------------------------------------------
@@ -135,6 +205,24 @@ def test_education_acronym_institution():
     edu = parse_education(blocks, BASELINE, [])
     assert edu[0].degree == "Diploma"
     assert edu[0].institution == "SAIT"
+
+
+def test_education_multiline_header_one_entry():
+    # Degree, institution, and date/GPA on separate lines -> one clean entry,
+    # without the field-of-study merging into the institution name.
+    blocks = [
+        block("Bachelor of Technology — Computer Systems", 0, font_size=11.0, is_bold=True),
+        block("British Columbia Institute of Technology (BCIT)  |  Burnaby, BC", 1, font_size=11.0),
+        block("2012 – 2016  |  GPA: 88%", 2, font_size=11.0, is_italic=True),
+    ]
+    edu = parse_education(blocks, BASELINE, [])
+    assert len(edu) == 1
+    assert edu[0].degree == "Bachelor of Technology"
+    assert edu[0].field_of_study == "Computer Systems"
+    assert edu[0].institution == "British Columbia Institute of Technology"
+    assert edu[0].gpa == "88%"
+    assert edu[0].dates.start_date == "2012"
+    assert edu[0].dates.end_date == "2016"
 
 
 def test_education_gpa_formats():
@@ -184,6 +272,28 @@ def test_skills_preserve_compound_names():
     assert skills.raw == ["C++", "CI/CD", "TCP/IP"]
 
 
+def test_skills_paren_aware_split_keeps_groups():
+    # Commas inside parentheses must not fragment the skill.
+    skills = parse_skills([block("AWS (EC2, RDS, S3) | GCP | Azure", 0)], [])
+    assert skills.raw == ["AWS (EC2, RDS, S3)", "GCP", "Azure"]
+
+
+def test_skills_category_label_on_own_line():
+    # "Category:" label on its own line, items on the next line(s).
+    blocks = [
+        block("Cloud & Infrastructure:", 0, is_bold=True),
+        block("AWS (EC2, RDS) | k8s | Docker", 1),
+        block("Databases:", 2, is_bold=True),
+        block("Postgres; MySQL", 3),
+    ]
+    skills = parse_skills(blocks, [])
+    assert skills.categorized["Cloud & Infrastructure"] == ["AWS (EC2, RDS)", "Kubernetes", "Docker"]
+    assert skills.categorized["Databases"] == ["PostgreSQL", "MySQL"]
+    # Labels themselves must not leak into raw.
+    assert "Cloud & Infrastructure" not in skills.raw
+    assert "Databases:" not in skills.raw
+
+
 def test_skills_canonicalize_and_merge_variants():
     # "JS"/"Javascript" and "python 3"/"Python" are the same skill written
     # differently; they should collapse to one canonical entry each.
@@ -220,6 +330,34 @@ def test_certifications_expiration():
 def test_certification_name_always_present():
     certs = parse_certifications([block("Some Random Credential", 0)], [])
     assert certs[0].name == "Some Random Credential"
+
+
+def test_certifications_multiline_block_is_one_cert():
+    # Bold name line + separate issuer/date line = a single certification.
+    blocks = [
+        block("AWS Certified Solutions Architect – Associate", 0, is_bold=True),
+        block("Amazon Web Services  |  Issued: March 2023  (Valid through March 2026)", 1),
+        block("Certified Kubernetes Administrator (CKA)", 2, is_bold=True),
+        block("The Linux Foundation  |  2022", 3),
+    ]
+    certs = parse_certifications(blocks, [])
+    assert len(certs) == 2
+    assert certs[0].name == "AWS Certified Solutions Architect – Associate"
+    assert certs[0].issuer == "Amazon Web Services"
+    assert certs[0].date_earned == "2023-03"
+    assert certs[0].expiration_date == "2026-03"
+    assert certs[1].name == "Certified Kubernetes Administrator (CKA)"
+    assert certs[1].issuer == "The Linux Foundation"
+
+
+def test_certifications_plain_lines_stay_separate():
+    # No bold, no dates -> each line is its own certification (not merged).
+    blocks = [
+        block("CompTIA Network+", 0),
+        block("CompTIA Security+", 1),
+    ]
+    certs = parse_certifications(blocks, [])
+    assert [c.name for c in certs] == ["CompTIA Network+", "CompTIA Security+"]
 
 
 # --------------------------------------------------------------------------
