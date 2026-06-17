@@ -89,6 +89,14 @@ DB connection settings are read from the `DB_HOST`, `DB_PORT`, `DB_NAME`,
   `metadata.warnings` — the parser **never raises** on a readable file.
 - `metadata.section_detection_status` is `"success"`, `"partial"`, or
   `"failed"`.
+- `metadata.extraction_confidence` is a transparent `0.0`–`1.0` estimate of how
+  completely the resume's structure was recovered (a triage signal for
+  downstream consumers, not a calibrated probability): half from the
+  section-detection status, half from which core fields were extracted.
+- Skills are **canonicalized**: common variants (`JS`/`Javascript`,
+  `python 3`/`Python`, `nodejs`/`node.js`) collapse to one form so the same
+  skill doesn't appear as multiple entries; compound names like `C++`,
+  `CI/CD`, `TCP/IP` are preserved as-is.
 
 The one place that fails loudly is **format detection**: an unsupported or
 corrupt file raises `UnsupportedFormatError` / `CorruptFileError`, because

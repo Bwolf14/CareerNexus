@@ -5,12 +5,55 @@ from __future__ import annotations
 import pytest
 
 from resume_parser.normalizer import (
+    canonical_skill_key,
     clean_text,
     normalize_date_token,
+    normalize_skill,
     parse_date_range,
     parse_single_date,
     strip_leading_bullet,
 )
+
+
+# --------------------------------------------------------------------------
+# skill canonicalization
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        # variants collapse to a canonical display form
+        ("js", "JavaScript"),
+        ("Javascript", "JavaScript"),
+        ("java script", "JavaScript"),
+        ("python", "Python"),
+        ("Python 3", "Python"),
+        ("python3", "Python"),
+        ("nodejs", "Node.js"),
+        ("node.js", "Node.js"),
+        ("NODE JS", "Node.js"),
+        ("postgres", "PostgreSQL"),
+        ("PostgreSQL", "PostgreSQL"),
+        ("k8s", "Kubernetes"),
+        # compound / proper-cased names pass through untouched
+        ("C++", "C++"),
+        ("CI/CD", "CI/CD"),
+        ("TCP/IP", "TCP/IP"),
+        (".NET", ".NET"),
+        # unknown skills keep their original casing, just cleaned up
+        ("Photoshop", "Photoshop"),
+        ("  Soldering ", "Soldering"),
+        ("Forklift Certified.", "Forklift Certified"),
+        ("", ""),
+    ],
+)
+def test_normalize_skill(raw, expected):
+    assert normalize_skill(raw) == expected
+
+
+def test_canonical_skill_key_collapses_spacing_but_keeps_compounds():
+    assert canonical_skill_key("Node.js") == canonical_skill_key("node js") == "nodejs"
+    assert canonical_skill_key("C++") == "c++"
+    assert canonical_skill_key("CI/CD") == "ci/cd"
 
 
 @pytest.mark.parametrize(

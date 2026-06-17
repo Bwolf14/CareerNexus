@@ -133,3 +133,24 @@ def test_scanned_like_pdf_fails_gracefully(samples):
     assert r.metadata.section_detection_status == "failed"
     assert any("scanned" in w.lower() or "no extractable text" in w.lower()
                for w in r.metadata.warnings)
+
+
+# --------------------------------------------------------------------------
+# extraction confidence
+# --------------------------------------------------------------------------
+def test_confidence_high_for_well_parsed_resume(samples):
+    r = parse_resume(samples["single_column.pdf"])
+    # name + email + experience + education + skills all present on a "success"
+    # parse -> top of the range.
+    assert r.metadata.extraction_confidence >= 0.9
+
+
+def test_confidence_zero_for_unparseable(samples):
+    r = parse_resume(samples["scanned_like.pdf"])
+    assert r.metadata.extraction_confidence == 0.0
+
+
+def test_confidence_in_valid_range_for_all_samples(samples):
+    for path in samples.values():
+        conf = parse_resume(path).metadata.extraction_confidence
+        assert 0.0 <= conf <= 1.0

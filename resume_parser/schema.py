@@ -124,6 +124,14 @@ class ParserMetadata(BaseModel):
     #            reliable field, all section lists will be empty.
     section_detection_status: Literal["success", "partial", "failed"] = "success"
 
+    # Heuristic 0.0–1.0 estimate of how completely the resume's structure was
+    # recovered — NOT a probability. It is a transparent function of the
+    # section-detection status plus which core fields were extracted (name,
+    # email, experience, education, skills), so downstream consumers
+    # (matching, gap analysis) can weight or triage low-confidence parses.
+    # See parser.build_parsed_resume for the exact computation.
+    extraction_confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+
     warnings: list[str] = Field(default_factory=list)
 
 

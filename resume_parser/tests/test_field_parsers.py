@@ -184,6 +184,21 @@ def test_skills_preserve_compound_names():
     assert skills.raw == ["C++", "CI/CD", "TCP/IP"]
 
 
+def test_skills_canonicalize_and_merge_variants():
+    # "JS"/"Javascript" and "python 3"/"Python" are the same skill written
+    # differently; they should collapse to one canonical entry each.
+    skills = parse_skills(
+        [block("JS, Javascript, python 3, Python, nodejs, Node.js", 0)], []
+    )
+    assert skills.raw == ["JavaScript", "Python", "Node.js"]
+
+
+def test_skills_categorized_canonicalized():
+    skills = parse_skills([block("Backend: postgres, k8s, postgres", 0)], [])
+    assert skills.categorized["Backend"] == ["PostgreSQL", "Kubernetes"]
+    assert skills.raw == ["PostgreSQL", "Kubernetes"]
+
+
 # --------------------------------------------------------------------------
 # certifications
 # --------------------------------------------------------------------------

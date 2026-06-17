@@ -114,6 +114,7 @@ def build_parsed_resume(doc: ExtractedDocument) -> ParsedResume:
                 source_format=doc.source_format,
                 parser_version=PARSER_VERSION,
                 section_detection_status="failed",
+                extraction_confidence=0.0,
                 warnings=warnings,
             ),
             raw_text=raw_text,
@@ -143,6 +144,9 @@ def build_parsed_resume(doc: ExtractedDocument) -> ParsedResume:
         source_format=doc.source_format,
         parser_version=PARSER_VERSION,
         section_detection_status=seg.status,
+        extraction_confidence=_compute_confidence(
+            seg.status, contact, experience, education, skills
+        ),
         warnings=warnings,
     )
 
@@ -159,6 +163,35 @@ def build_parsed_resume(doc: ExtractedDocument) -> ParsedResume:
         additional_sections=additional,
         raw_text=raw_text,
     )
+
+
+# Base score per section-detection outcome, plus completeness points for each
+# core field that was actually extracted. The two halves each top out at 0.5,
+# so a fully-parsed "success" resume scores 1.0 and a structureless "failed"
+# one scores 0.0. Deliberately simple and transparent — it's a triage signal,
+# not a calibrated probability.
+_CONFIDENCE_BASE = {"success": 0.5, "partial": 0.3, "failed": 0.0}
+_FIELD_WEIGHTS = {
+    "name": 0.10,
+    "email": 0.10,
+    "experience": 0.15,
+    "education": 0.10,
+    "skills": 0.05,
+}
+
+
+def _compute_confidence(status, contact, experience, education, skills) -> float:
+    """Transparent 0.0–1.0 estimate of extraction completeness (see schema)."""
+    present = {
+        "name": bool(contact.name),
+        "email": bool(contact.email),
+        "experience": bool(experience),
+        "education": bool(education),
+        "skills": bool(skills.raw),
+    }
+    score = _CONFIDENCE_BASE.get(status, 0.0)
+    score += sum(w for key, w in _FIELD_WEIGHTS.items() if present[key])
+    return round(min(1.0, score), 2)
 
 
 def _build_raw_text(doc: ExtractedDocument) -> str:
