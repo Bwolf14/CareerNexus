@@ -1,0 +1,6 @@
+# Career Nexus web UI — dependencies (in addition to the parser runtime)
+
+-r requirements.txt
+flask>=3.0
+pymysql>=1.1
+gunicorn>=21.0
