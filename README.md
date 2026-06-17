@@ -36,6 +36,45 @@ python -m resume_parser path/to/resume.pdf            # JSON to stdout
 python -m resume_parser path/to/resume.docx -o out.json
 ```
 
+## Web UI + database (Docker)
+
+The whole stack runs with one command — a browser UI for dropping resumes in,
+and a MariaDB database that the parsed results are written to:
+
+```bash
+docker compose up --build
+```
+
+Then open <http://localhost:8000>. Drop a PDF/DOCX onto the page and it will be:
+
+1. parsed with `parse_resume()`,
+2. stored in the database (full JSON in `user_resumes.parsed_data`, plus
+   normalised rows in `users`, `skills`/`user_skills`, `resume_experience`,
+   and `resume_education`), and
+3. offered back as a downloadable JSON file (also re-downloadable later from the
+   list on the home page, or directly at `/download/<id>`).
+
+No extra setup is required: the `db` service initialises the schema from
+[`init.sql`](init.sql) on first run, and the `web` service waits for the DB to
+become healthy before serving. Connect a client like DBeaver to
+`localhost:3306` (database `careernexus_db`) to browse the stored data.
+
+| Service | Image / build      | Port  | Notes                                      |
+| ------- | ------------------ | ----- | ------------------------------------------ |
+| `web`   | `./Dockerfile`     | 8000  | Flask + gunicorn upload UI                 |
+| `db`    | `mariadb:10.6`     | 3306  | schema from `init.sql`, data in a volume   |
+
+Running the web app outside Docker (for development):
+
+```bash
+pip install -r requirements-web.txt
+DB_HOST=127.0.0.1 python -m webapp.app    # http://localhost:8000
+```
+
+DB connection settings are read from the `DB_HOST`, `DB_PORT`, `DB_NAME`,
+`DB_USER`, and `DB_PASSWORD` environment variables (defaults match
+`docker-compose.yml`).
+
 ## Output shape
 
 `parse_resume` always returns a valid `ParsedResume`. Key guarantees
