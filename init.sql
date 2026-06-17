@@ -44,32 +44,3 @@ CREATE TABLE IF NOT EXISTS user_skills (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
 );
-
--- Normalised view of a parsed resume's work history. The full parsed document
--- is always stored as JSON in user_resumes.parsed_data; these tables make the
--- key sections queryable without unpacking JSON.
-CREATE TABLE IF NOT EXISTS resume_experience (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    resume_id INT NOT NULL,
-    company VARCHAR(255),
-    title VARCHAR(255),
-    location VARCHAR(255),
-    start_date VARCHAR(20),
-    end_date VARCHAR(20),
-    is_current BOOLEAN DEFAULT FALSE,
-    description TEXT,
-    FOREIGN KEY (resume_id) REFERENCES user_resumes(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS resume_education (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    resume_id INT NOT NULL,
-    institution VARCHAR(255),
-    degree VARCHAR(255),
-    field_of_study VARCHAR(255),
-    start_date VARCHAR(20),
-    end_date VARCHAR(20),
-    is_current BOOLEAN DEFAULT FALSE,
-    gpa VARCHAR(20),
-    FOREIGN KEY (resume_id) REFERENCES user_resumes(id) ON DELETE CASCADE
-);

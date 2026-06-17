@@ -1,4 +1,0 @@
-# Development / test dependencies (in addition to requirements.txt)
-
--r requirements.txt
-pytest>=7.0

@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   db:
     image: mariadb:10.6
@@ -10,27 +12,6 @@ services:
     volumes:
       - db_data:/var/lib/mysql
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 30s
-
-  web:
-    build: .
-    restart: always
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      DB_HOST: db
-      DB_PORT: "3306"
-      DB_NAME: careernexus_db
-      DB_USER: career_app_user
-      DB_PASSWORD: dbSecur3d
-    ports:
-      - "8000:8000"
 
 volumes:
   db_data:
