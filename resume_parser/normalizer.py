@@ -64,6 +64,83 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
+# --------------------------------------------------------------------------
+# Skill canonicalization
+#
+# Resumes spell the same skill many ways ("JS" / "Javascript" / "java script",
+# "python 3" / "Python", "nodejs" / "node.js"). Left alone these become
+# separate `skills.raw` entries and separate rows in the DB, which wrecks any
+# downstream deduplication, matching, or gap analysis. We canonicalize a
+# curated set of common variants and otherwise pass the skill through with its
+# original casing, so unknown/proper-cased skills (and compound names like
+# "C++", "CI/CD", "TCP/IP") are never mangled.
+# --------------------------------------------------------------------------
+
+# Separators that vary between writings of the same skill are dropped when
+# building the lookup key; "+", "#" and "/" are KEPT so "C++", "C#", "CI/CD"
+# and "TCP/IP" stay distinct.
+_SKILL_KEY_STRIP = re.compile(r"[ \t._\-]+")
+
+# Keyed by canonical_skill_key(variant) -> preferred display form.
+_SKILL_ALIASES = {
+    "python": "Python", "python3": "Python", "py": "Python",
+    "javascript": "JavaScript", "js": "JavaScript",
+    "typescript": "TypeScript", "ts": "TypeScript",
+    "nodejs": "Node.js", "node": "Node.js",
+    "react": "React", "reactjs": "React",
+    "angular": "Angular", "angularjs": "Angular",
+    "vue": "Vue.js", "vuejs": "Vue.js",
+    "postgresql": "PostgreSQL", "postgres": "PostgreSQL", "psql": "PostgreSQL",
+    "mysql": "MySQL",
+    "mongodb": "MongoDB", "mongo": "MongoDB",
+    "kubernetes": "Kubernetes", "k8s": "Kubernetes",
+    "docker": "Docker",
+    "aws": "AWS", "amazonwebservices": "AWS",
+    "gcp": "GCP", "googlecloud": "GCP", "googlecloudplatform": "GCP",
+    "azure": "Azure", "microsoftazure": "Azure",
+    "go": "Go", "golang": "Go",
+    "c++": "C++", "cplusplus": "C++",
+    "c#": "C#", "csharp": "C#",
+    ".net": ".NET", "net": ".NET", "dotnet": ".NET",
+    "html": "HTML", "html5": "HTML",
+    "css": "CSS", "css3": "CSS",
+    "sql": "SQL",
+    "rest": "REST", "restapi": "REST", "restful": "REST",
+    "ci/cd": "CI/CD", "cicd": "CI/CD",
+    "linux": "Linux",
+    "git": "Git",
+    "bash": "Bash", "shell": "Bash",
+    "sklearn": "scikit-learn", "scikitlearn": "scikit-learn",
+    "tensorflow": "TensorFlow",
+    "pytorch": "PyTorch",
+    "powerbi": "Power BI",
+    "tableau": "Tableau",
+    "excel": "Excel", "microsoftexcel": "Excel", "msexcel": "Excel",
+}
+
+
+def canonical_skill_key(name: str) -> str:
+    """Casefold and drop spacing/dot/hyphen variation for skill matching.
+
+    "Node.js", "node js" and "nodejs" all collapse to ``"nodejs"``; "+", "#"
+    and "/" are preserved so distinct compound skills don't merge.
+    """
+    return _SKILL_KEY_STRIP.sub("", name.strip().lower())
+
+
+def normalize_skill(name: str) -> str:
+    """Canonicalize one skill name; return "" if nothing usable remains.
+
+    Known variants map to a preferred display form; anything else is returned
+    cleaned (whitespace collapsed, trailing punctuation trimmed) with its
+    original casing intact.
+    """
+    name = clean_text(name).rstrip(" .,;:")
+    if not name:
+        return ""
+    return _SKILL_ALIASES.get(canonical_skill_key(name), name)
+
+
 def strip_leading_bullet(text: str) -> tuple[str, bool]:
     """Return (text_without_leading_bullet, was_bulleted).
 
