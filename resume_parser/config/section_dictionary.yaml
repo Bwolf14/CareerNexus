@@ -1,0 +1,76 @@
+# Section keyword dictionary — Career Nexus Resume Parser
+#
+# Maps canonical section names (used in resume_schema.py / ParsedResume)
+# to a list of header synonyms. Matching is exact, after normalizing the
+# candidate heading text to lowercase with punctuation/whitespace stripped.
+#
+# To support a new heading variant: add it to the relevant list below.
+# No code changes required.
+
+contact_info:
+  - "contact"
+  - "contact information"
+  - "contact info"
+  - "personal information"
+
+summary:
+  - "summary"
+  - "professional summary"
+  - "career summary"
+  - "objective"
+  - "career objective"
+  - "professional objective"
+  - "profile"
+  - "about me"
+  - "personal statement"
+
+experience:
+  - "experience"
+  - "work experience"
+  - "professional experience"
+  - "employment history"
+  - "work history"
+  - "career history"
+  - "relevant experience"
+  - "professional background"
+  - "employment experience"
+
+education:
+  - "education"
+  - "education and training"
+  - "academic background"
+  - "academic history"
+  - "educational background"
+
+skills:
+  - "skills"
+  - "technical skills"
+  - "core competencies"
+  - "areas of expertise"
+  - "key skills"
+  - "skills and abilities"
+  - "competencies"
+  - "technical proficiencies"
+
+certifications:
+  - "certifications"
+  - "certifications and licenses"
+  - "licenses and certifications"
+  - "professional certifications"
+  - "licenses"
+  - "credentials"
+
+projects:
+  - "projects"
+  - "personal projects"
+  - "key projects"
+  - "selected projects"
+  - "academic projects"
+  - "technical projects"
+
+volunteer_experience:
+  - "volunteer experience"
+  - "volunteering"
+  - "volunteer work"
+  - "community involvement"
+  - "community service"
