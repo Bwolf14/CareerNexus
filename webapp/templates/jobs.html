@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Career Nexus — Resume Parser</title>
+  <title>Career Nexus — Job Finder</title>
   <style>
     :root { --bg:#0f172a; --card:#1e293b; --accent:#38bdf8; --text:#e2e8f0; --muted:#94a3b8; --border:#334155; }
     * { box-sizing: border-box; }
@@ -12,6 +12,7 @@
     .wrap { max-width: 900px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
     h1 { font-size: 1.6rem; margin-bottom: .25rem; }
     .sub { color: var(--muted); margin-top: 0; }
+    .nav { margin-bottom: .5rem; font-size: .9rem; }
     .card { background: var(--card); border:1px solid var(--border); border-radius: 12px;
             padding: 1.5rem; margin-top: 1.5rem; }
     .drop { border: 2px dashed var(--border); border-radius: 10px; padding: 2.5rem 1rem;
@@ -23,6 +24,7 @@
            padding:.6rem 1.1rem; font-weight:600; cursor:pointer; font-size:.95rem; }
     .btn:disabled { opacity:.5; cursor:not-allowed; }
     .filename { margin-top: 1rem; color: var(--text); font-size:.95rem; }
+    .hint { color: var(--muted); font-size:.85rem; margin-top:.75rem; }
     table { width:100%; border-collapse: collapse; margin-top: .5rem; font-size:.92rem; }
     th, td { text-align:left; padding:.55rem .5rem; border-bottom:1px solid var(--border); }
     th { color: var(--muted); font-weight:600; }
@@ -31,16 +33,20 @@
     .empty { color: var(--muted); padding: 1rem 0; }
     .err { background:#7f1d1d; border:1px solid #b91c1c; color:#fecaca;
            padding:.75rem 1rem; border-radius:8px; margin-top:1rem; font-size:.9rem; }
+    .tag { display:inline-block; padding:.1rem .5rem; border-radius:999px; font-size:.75rem;
+           font-weight:600; background:#0b1220; border:1px solid var(--border); color:var(--muted); }
+    .spinner { display:none; margin-top:1rem; color:var(--muted); font-size:.9rem; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Career Nexus Resume Parser</h1>
-    <p class="sub">Drop a PDF or DOCX resume — it's parsed, stored in the database, and the JSON is available to download.</p>
-    <p class="sub" style="margin-top:.5rem;">Looking for jobs? Try the <a href="/jobs">Job Finder</a> — it scrapes live postings that match a resume.</p>
+    <p class="nav"><a href="/">← Resume parser</a></p>
+    <h1>Career Nexus Job Finder</h1>
+    <p class="sub">Drop a resume — we pull search terms out of it, scrape live job
+       postings that match, and store the results for the matching step later.</p>
 
     <div class="card">
-      <form id="form" action="/upload" method="post" enctype="multipart/form-data">
+      <form id="form" action="/jobs/search" method="post" enctype="multipart/form-data">
         <label class="drop" id="drop">
           <input type="file" id="file" name="resume" accept=".pdf,.docx" required />
           <p><strong>Click to choose</strong> or drag &amp; drop a resume here</p>
@@ -48,34 +54,39 @@
         </label>
         <div class="filename" id="filename"></div>
         <div style="margin-top:1rem;">
-          <button class="btn" id="submit" type="submit" disabled>Parse &amp; store</button>
+          <button class="btn" id="submit" type="submit" disabled>Find matching jobs</button>
         </div>
+        <div class="spinner" id="spinner">Scraping live job boards — this can take 10–30 seconds…</div>
+        <p class="hint">Search terms are taken from your job titles and top skills.
+           Live results come from JobSpy ({{ ', '.join(sites) if sites else 'Indeed' }}).</p>
       </form>
     </div>
 
     <div class="card">
-      <h2 style="font-size:1.1rem; margin-top:0;">Parsed resumes</h2>
+      <h2 style="font-size:1.1rem; margin-top:0;">Previous job searches</h2>
       {% if db_error %}
         <div class="err">Could not reach the database: {{ db_error }}</div>
-      {% elif resumes %}
+      {% elif searches %}
         <table>
           <thead>
-            <tr><th>ID</th><th>Name / username</th><th>Email</th><th>Uploaded</th><th>JSON</th></tr>
+            <tr><th>ID</th><th>Search terms</th><th>Location</th><th>Results</th><th>Source</th><th>When</th><th>JSON</th></tr>
           </thead>
           <tbody>
-            {% for r in resumes %}
+            {% for s in searches %}
             <tr>
-              <td>{{ r.id }}</td>
-              <td>{{ r.username }}</td>
-              <td>{{ r.email }}</td>
-              <td>{{ r.upload_date }}</td>
-              <td><a href="/download/{{ r.id }}">Download</a></td>
+              <td><a href="/jobs/{{ s.id }}">{{ s.id }}</a></td>
+              <td>{{ s.search_terms }}</td>
+              <td>{{ s.location or '—' }}</td>
+              <td>{{ s.results_count }}</td>
+              <td><span class="tag">{{ s.source }}</span></td>
+              <td>{{ s.ran_at }}</td>
+              <td><a href="/jobs/download/{{ s.id }}">Download</a></td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
       {% else %}
-        <p class="empty">No resumes parsed yet. Upload one above to get started.</p>
+        <p class="empty">No job searches yet. Upload a resume above to run one.</p>
       {% endif %}
     </div>
   </div>
@@ -85,6 +96,8 @@
     const file = document.getElementById('file');
     const submit = document.getElementById('submit');
     const filename = document.getElementById('filename');
+    const form = document.getElementById('form');
+    const spinner = document.getElementById('spinner');
 
     function update() {
       if (file.files.length) {
@@ -103,6 +116,12 @@
       drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('drag'); }));
     drop.addEventListener('drop', e => {
       if (e.dataTransfer.files.length) { file.files = e.dataTransfer.files; update(); }
+    });
+
+    form.addEventListener('submit', () => {
+      submit.disabled = true;
+      submit.textContent = 'Searching…';
+      spinner.style.display = 'block';
     });
   </script>
 </body>

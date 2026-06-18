@@ -75,6 +75,42 @@ DB connection settings are read from the `DB_HOST`, `DB_PORT`, `DB_NAME`,
 `DB_USER`, and `DB_PASSWORD` environment variables (defaults match
 `docker-compose.yml`).
 
+## Job Finder (job scraping)
+
+A separate subsystem ([`job_scraper/`](job_scraper/)) turns a parsed resume into
+job-board searches and pulls live postings via
+[JobSpy](https://github.com/speedyapply/JobSpy). It shares nothing with the
+parser except the parsed-resume dict, so it can evolve independently — and later
+feed an AI matching step that ranks postings against the resume and suggests
+certifications to close gaps.
+
+Open <http://localhost:8000/jobs>, drop a resume, and it will:
+
+1. parse the resume and pull **search terms** from it (current/recent job titles
+   first, then top skills) — see [`job_scraper/queries.py`](job_scraper/queries.py),
+2. scrape matching postings with JobSpy (Indeed by default), normalising each to
+   the `jobs` table shape — [`job_scraper/scraper.py`](job_scraper/scraper.py),
+3. store the run in **`job_searches`** and every posting in **`jobs`** (browsable
+   in DBeaver, same database), and
+4. write a JSON file to `job_results/jobs_<id>.json` pairing the search context
+   with the postings — ready to hand to the AI matcher alongside the resume JSON
+   (also downloadable from the results page or at `/jobs/download/<id>`).
+
+If JobSpy is unavailable, the network is blocked, or a search returns nothing,
+the page falls back to clearly-labelled **sample** postings so the demo still
+works; the storage path is identical to a live run.
+
+| Env var                 | Default        | Purpose                                            |
+| ----------------------- | -------------- | -------------------------------------------------- |
+| `JOB_SITES`             | `indeed`       | Comma-separated boards (`indeed,zip_recruiter`, …) |
+| `JOB_RESULTS_PER_QUERY` | `15`           | Postings requested per search term                 |
+| `JOB_HOURS_OLD`         | `168`          | Only postings newer than this many hours           |
+| `JOB_RESULTS_DIR`       | `./job_results`| Where the JSON result files are written            |
+
+> **Note on LinkedIn:** JobSpy can scrape LinkedIn but it rate-limits hard and
+> needs rotating proxies for anything beyond a trickle. Indeed is the reliable,
+> no-proxy default; add other boards as the project grows.
+
 ## Output shape
 
 `parse_resume` always returns a valid `ParsedResume`. Key guarantees
