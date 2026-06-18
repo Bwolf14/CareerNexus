@@ -69,6 +69,15 @@
           {% if location %}<span class="pill">📍 {{ location }}</span>{% endif %}
         </div>
 
+        {% if settings %}
+        <div style="margin-top:.6rem;">
+          {% set wt = {'any':'Any work type','remote':'Remote only','local':'On-site / local'} %}
+          <span class="pill">💼 {{ wt.get(settings.work_type, settings.work_type) }}</span>
+          <span class="pill">🌐 {{ settings.country }}</span>
+          {% if settings.keywords %}<span class="pill">🔑 {{ settings.keywords | join(', ') }}</span>{% endif %}
+        </div>
+        {% endif %}
+
         <p class="meta" style="margin-top:1rem;">
           Found <strong>{{ job_count }}</strong> posting{{ '' if job_count == 1 else 's' }}.
           {% if search_id %}Stored as job search <strong>#{{ search_id }}</strong> in the database.{% endif %}

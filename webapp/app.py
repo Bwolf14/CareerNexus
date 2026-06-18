@@ -46,10 +46,16 @@ from job_scraper import (
     write_results_json,
 )
 from job_scraper.output import build_payload
+from job_scraper.scraper import COUNTRY_INDEED
 from resume_parser import parse_resume
 from resume_parser.exceptions import ResumeParserError
 
 from . import db
+
+# Search-form option whitelists (anything else falls back to the default).
+WORK_TYPES = {"any", "remote", "local"}
+COUNTRIES = {"Canada", "USA"}
+MAX_KEYWORDS = 4
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16 MB upload cap
@@ -88,6 +94,34 @@ def _parse_resume_file(file) -> dict:
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+def _read_job_settings(form) -> dict:
+    """Pull and sanitise the optional job-search options from the form.
+
+    Returns a dict with ``keywords`` (list[str]), ``location`` (str | None),
+    ``work_type`` ("any"/"remote"/"local"), and ``country`` ("Canada"/"USA").
+    Unknown/invalid values fall back to safe defaults.
+    """
+    raw_keywords = form.get("keywords", "")
+    keywords = [k.strip() for k in raw_keywords.split(",") if k.strip()][:MAX_KEYWORDS]
+
+    location = (form.get("location") or "").strip() or None
+
+    work_type = (form.get("work_type") or "any").strip().lower()
+    if work_type not in WORK_TYPES:
+        work_type = "any"
+
+    country = (form.get("country") or COUNTRY_INDEED).strip()
+    if country not in COUNTRIES:
+        country = COUNTRY_INDEED if COUNTRY_INDEED in COUNTRIES else "Canada"
+
+    return {
+        "keywords": keywords,
+        "location": location,
+        "work_type": work_type,
+        "country": country,
+    }
 
 
 @app.route("/")
@@ -199,7 +233,11 @@ def jobs_index():
         searches = []
         db_error = str(exc)
     return render_template(
-        "jobs.html", searches=searches, db_error=db_error, sites=DEFAULT_SITES
+        "jobs.html",
+        searches=searches,
+        db_error=db_error,
+        sites=DEFAULT_SITES,
+        default_country=COUNTRY_INDEED if COUNTRY_INDEED in COUNTRIES else "Canada",
     )
 
 
@@ -226,6 +264,9 @@ def jobs_search():
             500,
         )
 
+    # Optional, user-supplied search settings from the form.
+    settings = _read_job_settings(request.form)
+
     # Persist the resume too, so the scrape run can link back to a resume_id
     # (and the parsed JSON is downloadable to pair with the jobs JSON later).
     resume_id = None
@@ -235,17 +276,25 @@ def jobs_search():
     except Exception as exc:
         db_error = str(exc)
 
-    queries = build_queries_from_resume(parsed)
+    queries = build_queries_from_resume(
+        parsed,
+        location_override=settings["location"],
+        extra_keywords=settings["keywords"],
+    )
     if not queries:
         return render_template(
             "job_results.html",
-            error="Couldn't find any job titles or skills in this resume to "
-            "search on. Try a resume with a clear work-experience section.",
+            error="Nothing to search on — add a keyword above, or upload a "
+            "resume with a clear work-experience section.",
             filename=file.filename,
             resume_id=resume_id,
         )
 
-    result = scrape_jobs_for_queries(queries)
+    result = scrape_jobs_for_queries(
+        queries,
+        country_indeed=settings["country"],
+        remote_preference=settings["work_type"],
+    )
     jobs = result["jobs"]
     search_terms = [q["search_term"] for q in queries]
     location = queries[0].get("location")
@@ -269,6 +318,7 @@ def jobs_search():
             sites=result["sites"],
             resume_id=resume_id,
             search_id=search_id,
+            settings=settings,
         )
         path = write_results_json(search_id or resume_id or "latest", payload)
         json_filename = os.path.basename(path)
@@ -283,6 +333,7 @@ def jobs_search():
         location=location,
         source=result["source"],
         sites=result["sites"],
+        settings=settings,
         errors=result.get("errors") or [],
         filename=file.filename,
         resume_id=resume_id,

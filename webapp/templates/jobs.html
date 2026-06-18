@@ -25,6 +25,21 @@
     .btn:disabled { opacity:.5; cursor:not-allowed; }
     .filename { margin-top: 1rem; color: var(--text); font-size:.95rem; }
     .hint { color: var(--muted); font-size:.85rem; margin-top:.75rem; }
+    .opts { margin-top: 1.25rem; display: grid; gap: 1rem; }
+    .opts label.field { display:block; font-size:.85rem; color:var(--muted); font-weight:600; margin-bottom:.35rem; }
+    .opts input[type=text], .opts select {
+      width:100%; background:#0b1220; border:1px solid var(--border); color:var(--text);
+      border-radius:8px; padding:.55rem .65rem; font-size:.92rem; font-family:inherit; }
+    .opts input[type=text]:focus, .opts select:focus { outline:none; border-color:var(--accent); }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+    .seg { display:flex; gap:.4rem; flex-wrap:wrap; }
+    .seg label { flex:1; min-width:90px; text-align:center; cursor:pointer; }
+    .seg input { position:absolute; opacity:0; pointer-events:none; }
+    .seg span { display:block; padding:.5rem .4rem; border:1px solid var(--border); border-radius:8px;
+                font-size:.88rem; color:var(--muted); background:#0b1220; transition:.12s; }
+    .seg input:checked + span { border-color:var(--accent); color:var(--accent); background:rgba(56,189,248,.1); font-weight:600; }
+    .field-hint { color:var(--muted); font-size:.78rem; margin-top:.3rem; }
+    @media (max-width:560px){ .row { grid-template-columns:1fr; } }
     table { width:100%; border-collapse: collapse; margin-top: .5rem; font-size:.92rem; }
     th, td { text-align:left; padding:.55rem .5rem; border-bottom:1px solid var(--border); }
     th { color: var(--muted); font-weight:600; }
@@ -53,12 +68,59 @@
           <p>PDF or DOCX, up to 16 MB</p>
         </label>
         <div class="filename" id="filename"></div>
-        <div style="margin-top:1rem;">
+
+        <div class="opts">
+          <div>
+            <label class="field" for="keywords">Extra keywords <span style="font-weight:400;">(optional)</span></label>
+            <input type="text" id="keywords" name="keywords"
+                   placeholder="e.g. welding, heavy equipment, pipefitter" />
+            <div class="field-hint">Comma-separated. These are searched in addition to titles from your resume.</div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label class="field" for="location">Location <span style="font-weight:400;">(optional)</span></label>
+              <input type="text" id="location" name="location" list="location-presets"
+                     placeholder="Leave blank to use your resume" />
+              <datalist id="location-presets">
+                <option value="Calgary, AB"></option>
+                <option value="Edmonton, AB"></option>
+                <option value="Alberta, Canada"></option>
+                <option value="British Columbia, Canada"></option>
+                <option value="Ontario, Canada"></option>
+                <option value="Canada"></option>
+                <option value="Remote"></option>
+                <option value="United States"></option>
+              </datalist>
+              <div class="field-hint">A city, a province, or a whole country.</div>
+            </div>
+
+            <div>
+              <label class="field" for="country">Job board region</label>
+              <select id="country" name="country">
+                <option value="Canada" {{ 'selected' if default_country == 'Canada' else '' }}>🇨🇦 Canada (Indeed.ca)</option>
+                <option value="USA" {{ 'selected' if default_country == 'USA' else '' }}>🇺🇸 United States (Indeed.com)</option>
+              </select>
+              <div class="field-hint">Which country's Indeed to search.</div>
+            </div>
+          </div>
+
+          <div>
+            <label class="field">Work type</label>
+            <div class="seg">
+              <label><input type="radio" name="work_type" value="any" checked /><span>Any</span></label>
+              <label><input type="radio" name="work_type" value="remote" /><span>Remote only</span></label>
+              <label><input type="radio" name="work_type" value="local" /><span>On-site / local</span></label>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:1.25rem;">
           <button class="btn" id="submit" type="submit" disabled>Find matching jobs</button>
         </div>
         <div class="spinner" id="spinner">Scraping live job boards — this can take 10–30 seconds…</div>
-        <p class="hint">Search terms are taken from your job titles and top skills.
-           Live results come from JobSpy ({{ ', '.join(sites) if sites else 'Indeed' }}).</p>
+        <p class="hint">Search terms come from your resume's job titles and top skills, plus any
+           keywords above. Live results come from JobSpy ({{ ', '.join(sites) if sites else 'Indeed' }}).</p>
       </form>
     </div>
 
