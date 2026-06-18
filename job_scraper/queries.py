@@ -24,7 +24,7 @@ from typing import Any, Optional
 # Cap how many distinct queries we run per resume. Each query is a separate
 # scrape (network round-trip + rate-limit exposure), so a small number keeps the
 # demo fast and polite to the job boards.
-MAX_QUERIES = 3
+MAX_QUERIES = 4
 MAX_SKILLS_IN_QUERY = 3
 
 # Trailing seniority/level markers that hurt a keyword search more than they
@@ -72,15 +72,24 @@ def _looks_like_skill(value: str) -> bool:
     return len(value.split()) <= 4
 
 
-def build_queries_from_resume(parsed: dict[str, Any]) -> list[dict[str, Any]]:
+def build_queries_from_resume(
+    parsed: dict[str, Any],
+    *,
+    location_override: Optional[str] = None,
+    extra_keywords: Optional[list[str]] = None,
+) -> list[dict[str, Any]]:
     """Build an ordered, de-duplicated list of search queries from a resume.
 
     Each query is ``{"search_term": str, "location": str | None, "source": str}``
-    where ``source`` records how the term was derived ("current_title",
-    "past_title", or "skills") — handy for debugging and for the UI.
+    where ``source`` records how the term was derived ("keyword",
+    "current_title", "past_title", or "skills") — handy for debugging and the UI.
+
+    ``location_override`` replaces the resume's location for every query (so a
+    user can search Edmonton, all of Alberta, etc.). ``extra_keywords`` are the
+    user's own search terms; they take priority over resume-derived ones.
     """
     contact = parsed.get("contact_info") or {}
-    location = _clean(contact.get("location"))
+    location = _clean(location_override) or _clean(contact.get("location"))
 
     queries: list[dict[str, Any]] = []
     seen_terms: set[str] = set()
@@ -95,9 +104,13 @@ def build_queries_from_resume(parsed: dict[str, Any]) -> list[dict[str, Any]]:
         seen_terms.add(key)
         queries.append({"search_term": term, "location": location, "source": source})
 
+    # 0) User-supplied keywords first — explicit intent beats anything inferred.
+    for keyword in extra_keywords or []:
+        add(keyword, "keyword")
+
     experience = parsed.get("experience") or []
 
-    # 1) Current role(s) first — the strongest signal of what to search for.
+    # 1) Current role(s) next — the strongest signal inferred from the resume.
     for exp in experience:
         dates = exp.get("dates") or {}
         if dates.get("is_current"):

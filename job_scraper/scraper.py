@@ -202,6 +202,35 @@ def _sample_jobs(queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return jobs
 
 
+def _is_job_remote(job: dict[str, Any]) -> bool:
+    """Best-effort 'is this posting remote?' from the normalised job dict.
+
+    JobSpy's own ``is_remote`` flag is only set ~30% of the time on Indeed (and
+    its ``is_remote=True`` search arg is effectively a no-op there), so we also
+    look for "remote" in the title/location text, which Indeed populates far
+    more reliably (e.g. location "Remote, US").
+    """
+    if job.get("is_remote"):
+        return True
+    text = f"{job.get('title') or ''} {job.get('location') or ''}".lower()
+    return "remote" in text
+
+
+def _apply_remote_filter(
+    jobs: list[dict[str, Any]], remote_preference: str
+) -> list[dict[str, Any]]:
+    """Filter postings by work-type preference using :func:`_is_job_remote`.
+
+    'remote' keeps only postings that look remote; 'local' drops those; 'any'
+    is a no-op. Done client-side because the boards don't filter reliably.
+    """
+    if remote_preference == "remote":
+        return [j for j in jobs if _is_job_remote(j)]
+    if remote_preference == "local":
+        return [j for j in jobs if not _is_job_remote(j)]
+    return jobs
+
+
 def scrape_jobs_for_queries(
     queries: list[dict[str, Any]],
     *,
@@ -209,18 +238,24 @@ def scrape_jobs_for_queries(
     results_wanted: int = RESULTS_PER_QUERY,
     hours_old: int = HOURS_OLD,
     country_indeed: str = COUNTRY_INDEED,
+    remote_preference: str = "any",
     allow_sample_fallback: bool = True,
 ) -> dict[str, Any]:
     """Run every query through JobSpy and return a normalised result bundle.
 
     Returns ``{"jobs": [...], "source": "jobspy"|"sample", "sites": [...],
     "errors": [...]}``. ``source`` is ``"sample"`` when the returned jobs are the
-    offline placeholders rather than live postings.
+    offline placeholders rather than live postings. ``remote_preference`` is one
+    of "any", "remote", or "local".
     """
     sites = sites or DEFAULT_SITES
     errors: list[str] = []
     collected: list[dict[str, Any]] = []
     got_live = False
+
+    # Remote/local filtering happens client-side and discards a chunk of each
+    # query's results, so pull a larger pool when a work-type filter is active.
+    fetch_wanted = results_wanted * 2 if remote_preference != "any" else results_wanted
 
     try:
         from jobspy import scrape_jobs as _scrape  # heavy import, done lazily
@@ -235,7 +270,7 @@ def scrape_jobs_for_queries(
                     site_name=sites,
                     search_term=query["search_term"],
                     location=query.get("location") or None,
-                    results_wanted=results_wanted,
+                    results_wanted=fetch_wanted,
                     hours_old=hours_old,
                     country_indeed=country_indeed,
                 )
@@ -246,15 +281,16 @@ def scrape_jobs_for_queries(
             except Exception as exc:  # one bad query shouldn't sink the run
                 errors.append(f"{query['search_term']!r}: {exc}")
 
-    jobs = _dedup(collected)
+    jobs = _apply_remote_filter(_dedup(collected), remote_preference)
     if jobs:
         return {"jobs": jobs, "source": "jobspy", "sites": sites, "errors": errors}
 
     if allow_sample_fallback:
         if got_live:
             errors.append("Live scrape returned no postings; showing sample data.")
+        sample = _apply_remote_filter(_sample_jobs(queries), remote_preference)
         return {
-            "jobs": _sample_jobs(queries),
+            "jobs": sample,
             "source": "sample",
             "sites": sites,
             "errors": errors,

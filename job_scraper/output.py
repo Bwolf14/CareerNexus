@@ -33,14 +33,20 @@ def build_payload(
     sites: list[str],
     resume_id: Optional[int] = None,
     search_id: Optional[int] = None,
+    settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """Assemble the JSON-serialisable result bundle (also reused for downloads)."""
+    """Assemble the JSON-serialisable result bundle (also reused for downloads).
+
+    ``settings`` captures the user's search options (keywords, location,
+    work type, country) so the downstream AI matcher has the full context.
+    """
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "resume_id": resume_id,
         "search_id": search_id,
         "source": source,
         "sites_searched": sites,
+        "settings": settings or {},
         "search_terms": [q.get("search_term") for q in queries],
         "queries": queries,
         "job_count": len(jobs),
