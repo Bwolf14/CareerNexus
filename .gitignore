@@ -3,3 +3,6 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+
+# Job scraper JSON output (generated at runtime; feed to the AI matcher)
+job_results/

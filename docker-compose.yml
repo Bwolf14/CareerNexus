@@ -29,8 +29,16 @@ services:
       DB_NAME: careernexus_db
       DB_USER: career_app_user
       DB_PASSWORD: dbSecur3d
+      # Job scraper (JobSpy) settings. Indeed is the most reliable, no-proxy
+      # source; add zip_recruiter for more coverage. LinkedIn needs proxies.
+      JOB_SITES: indeed
+      JOB_RESULTS_DIR: /app/job_results
     ports:
       - "8000:8000"
+    volumes:
+      # Persist the generated job-search JSON files outside the container so
+      # they're easy to inspect / hand to the AI matcher later.
+      - ./job_results:/app/job_results
 
 volumes:
   db_data:

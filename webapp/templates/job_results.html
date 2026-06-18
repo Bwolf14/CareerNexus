@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Job matches — Career Nexus</title>
+  <style>
+    :root { --bg:#0f172a; --card:#1e293b; --accent:#38bdf8; --text:#e2e8f0; --muted:#94a3b8; --border:#334155; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+           background:var(--bg); color:var(--text); }
+    .wrap { max-width:900px; margin:0 auto; padding:2rem 1.25rem 4rem; }
+    h1 { font-size:1.5rem; }
+    .nav { margin-bottom: .5rem; font-size: .9rem; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:12px;
+            padding:1.5rem; margin-top:1.5rem; }
+    .btn { display:inline-block; background:var(--accent); color:#04293a; border:none;
+           border-radius:8px; padding:.6rem 1.1rem; font-weight:600; text-decoration:none; font-size:.95rem; }
+    .btn.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+    a { color:var(--accent); }
+    .err { background:#7f1d1d; border:1px solid #b91c1c; color:#fecaca;
+           padding:.75rem 1rem; border-radius:8px; font-size:.92rem; }
+    .warn { background:#78350f; border:1px solid #b45309; color:#fde68a;
+            padding:.75rem 1rem; border-radius:8px; font-size:.88rem; margin-top:1rem; }
+    .meta { color:var(--muted); font-size:.9rem; }
+    .pill { display:inline-block; padding:.15rem .65rem; border-radius:999px; font-size:.8rem;
+            font-weight:600; background:#0b1220; border:1px solid var(--border); color:var(--text); margin:.15rem .25rem .15rem 0; }
+    .src { display:inline-block; padding:.15rem .6rem; border-radius:999px; font-size:.78rem; font-weight:700; }
+    .src.live { background:#064e3b; color:#6ee7b7; }
+    .src.sample { background:#78350f; color:#fcd34d; }
+    .job { border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; margin-top:.85rem; background:#0b1220; }
+    .job h3 { margin:0 0 .25rem; font-size:1.05rem; }
+    .job h3 a { color:var(--text); }
+    .company { color:var(--accent); font-weight:600; }
+    .badges { margin:.4rem 0; }
+    .badge { display:inline-block; padding:.1rem .5rem; border-radius:6px; font-size:.75rem;
+             background:#13233b; border:1px solid var(--border); color:var(--muted); margin:.1rem .3rem .1rem 0; }
+    .badge.remote { color:#6ee7b7; border-color:#065f46; }
+    .badge.salary { color:#fcd34d; border-color:#92400e; }
+    .desc { color:var(--muted); font-size:.88rem; line-height:1.5; margin-top:.5rem; }
+    .empty { color:var(--muted); padding:1rem 0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <p class="nav"><a href="/jobs">← Job finder</a></p>
+    <h1>Job matches</h1>
+
+    {% if error %}
+      <div class="card">
+        <div class="err">{{ error }}</div>
+        <p style="margin-top:1.25rem;"><a class="btn secondary" href="/jobs">← Back</a></p>
+      </div>
+    {% else %}
+      <div class="card">
+        {% if filename %}<p class="meta">Resume: <strong>{{ filename }}</strong>{% if contact_name %} — {{ contact_name }}{% endif %}</p>{% endif %}
+        {% if stored_view %}<p class="meta">Stored search <strong>#{{ search_id }}</strong>{% if contact_name %} — {{ contact_name }}{% endif %}</p>{% endif %}
+
+        <p style="margin:.5rem 0;">
+          Data source:
+          <span class="src {{ 'live' if source != 'sample' else 'sample' }}">
+            {{ 'LIVE (' ~ (sites | join(', ')) ~ ')' if source != 'sample' else 'SAMPLE (offline fallback)' }}
+          </span>
+        </p>
+
+        <p class="meta" style="margin-bottom:.3rem;">Searched for:</p>
+        <div>
+          {% for term in search_terms %}<span class="pill">{{ term }}</span>{% endfor %}
+          {% if location %}<span class="pill">📍 {{ location }}</span>{% endif %}
+        </div>
+
+        <p class="meta" style="margin-top:1rem;">
+          Found <strong>{{ job_count }}</strong> posting{{ '' if job_count == 1 else 's' }}.
+          {% if search_id %}Stored as job search <strong>#{{ search_id }}</strong> in the database.{% endif %}
+        </p>
+
+        {% if source == 'sample' %}
+          <div class="warn">Showing <strong>sample</strong> postings — no live results were
+            available (network blocked, JobSpy missing, or the search returned nothing).
+            The data shape and storage path are identical to a live run.</div>
+        {% endif %}
+
+        {% if db_error %}
+          <div class="warn">Database note: {{ db_error }}</div>
+        {% endif %}
+
+        {% if errors %}
+          <div class="warn"><strong>Scraper notes:</strong>
+            <ul style="margin:.3rem 0 0; padding-left:1.1rem;">
+              {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+
+        <p style="margin-top:1.25rem; display:flex; gap:.75rem; flex-wrap:wrap;">
+          {% if search_id %}<a class="btn" href="/jobs/download/{{ search_id }}">Download jobs JSON</a>{% endif %}
+          {% if resume_id %}<a class="btn secondary" href="/download/{{ resume_id }}">Download resume JSON</a>{% endif %}
+          <a class="btn secondary" href="/jobs">New search</a>
+        </p>
+        {% if json_filename %}<p class="meta" style="margin-top:.5rem;">Also written to <code>job_results/{{ json_filename }}</code> on the server.</p>{% endif %}
+      </div>
+
+      <div class="card">
+        <h2 style="font-size:1.1rem; margin-top:0;">Postings</h2>
+        {% if jobs %}
+          {% for job in jobs %}
+            <div class="job">
+              <h3>
+                {% if job.job_url %}<a href="{{ job.job_url }}" target="_blank" rel="noopener">{{ job.title or 'Untitled posting' }}</a>
+                {% else %}{{ job.title or 'Untitled posting' }}{% endif %}
+              </h3>
+              <div>
+                <span class="company">{{ job.company or 'Unknown company' }}</span>
+                {% if job.location %}<span class="meta"> · {{ job.location }}</span>{% endif %}
+              </div>
+              <div class="badges">
+                {% if job.salary_display %}<span class="badge salary">{{ job.salary_display }}</span>{% endif %}
+                {% if job.is_remote %}<span class="badge remote">Remote</span>{% endif %}
+                {% if job.job_type %}<span class="badge">{{ job.job_type }}</span>{% endif %}
+                {% if job.source_site %}<span class="badge">{{ job.source_site }}</span>{% endif %}
+                {% if job.date_posted %}<span class="badge">Posted {{ job.date_posted }}</span>{% endif %}
+                {% if job.search_term %}<span class="badge">↳ {{ job.search_term }}</span>{% endif %}
+              </div>
+              {% if job.description %}<div class="desc">{{ job.description[:320] }}{% if job.description|length > 320 %}…{% endif %}</div>{% endif %}
+            </div>
+          {% endfor %}
+        {% else %}
+          <p class="empty">No postings to show.</p>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+</body>
+</html>

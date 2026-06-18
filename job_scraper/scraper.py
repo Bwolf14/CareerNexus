@@ -1,0 +1,256 @@
+"""
+JobSpy wrapper: run search queries and return normalised job-posting dicts.
+
+Responsibilities
+----------------
+* call ``jobspy.scrape_jobs`` for each query,
+* normalise JobSpy's pandas rows into plain dicts matching the ``jobs`` table
+  (NaN/NaT scrubbed to ``None``, salary/date coerced to clean types),
+* de-duplicate within a run, and
+* fall back to clearly-labelled **sample** postings if JobSpy is unavailable or
+  every query comes back empty — so the demo UI always has something to show.
+
+JobSpy is imported lazily inside :func:`scrape_jobs_for_queries` so the web app
+still boots (and degrades to sample data) on a box where the dependency or the
+network isn't available.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import math
+import os
+from typing import Any, Optional
+
+# Default to Indeed only: it's JobSpy's most reliable source and isn't
+# aggressively rate-limited, which keeps the synchronous demo fast. Override
+# with JOB_SITES="indeed,zip_recruiter" (LinkedIn needs proxies — see README).
+DEFAULT_SITES = [
+    s.strip()
+    for s in os.environ.get("JOB_SITES", "indeed").split(",")
+    if s.strip()
+]
+
+# Per-query knobs, env-overridable for tuning the demo.
+RESULTS_PER_QUERY = int(os.environ.get("JOB_RESULTS_PER_QUERY", "15"))
+HOURS_OLD = int(os.environ.get("JOB_HOURS_OLD", "168"))  # last 7 days
+
+
+def _is_missing(value: Any) -> bool:
+    """True for None or a pandas NaN/NaT float (the common 'empty cell' cases)."""
+    if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    return False
+
+
+def _clean(value: Any) -> Any:
+    return None if _is_missing(value) else value
+
+
+def _to_str(value: Any) -> Optional[str]:
+    value = _clean(value)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _to_float(value: Any) -> Optional[float]:
+    value = _clean(value)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_date_str(value: Any) -> Optional[str]:
+    """Render a date/Timestamp as 'YYYY-MM-DD', or None if missing/unparseable."""
+    value = _clean(value)
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()[:10]
+        except Exception:
+            return None
+    return str(value)[:10] or None
+
+
+def _salary_display(
+    lo: Optional[float],
+    hi: Optional[float],
+    currency: Optional[str],
+    interval: Optional[str],
+) -> Optional[str]:
+    if lo is None and hi is None:
+        return None
+    sym = {"USD": "$", "CAD": "$", "EUR": "€", "GBP": "£"}.get(
+        (currency or "").upper(), ""
+    )
+
+    def fmt(n: float) -> str:
+        return f"{sym}{n:,.0f}"
+
+    if lo is not None and hi is not None and lo != hi:
+        amount = f"{fmt(lo)}–{fmt(hi)}"
+    else:
+        amount = fmt(lo if lo is not None else hi)  # type: ignore[arg-type]
+    return f"{amount} / {interval}" if interval else amount
+
+
+def _external_id(record: dict[str, Any], job_url: Optional[str]) -> str:
+    """Stable id for de-duplication: the board's id, else a hash of the URL."""
+    ext = _to_str(record.get("id"))
+    if ext:
+        return ext
+    basis = job_url or repr(sorted(record.items()))
+    return "url-" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
+
+
+def _normalise(record: dict[str, Any], query: dict[str, Any]) -> dict[str, Any]:
+    """Map one JobSpy row onto the jobs-table shape used everywhere downstream."""
+    job_url = _to_str(record.get("job_url")) or _to_str(record.get("job_url_direct"))
+    lo = _to_float(record.get("min_amount"))
+    hi = _to_float(record.get("max_amount"))
+    currency = _to_str(record.get("currency"))
+    interval = _to_str(record.get("interval"))
+
+    return {
+        "source_site": _to_str(record.get("site")),
+        "external_id": _external_id(record, job_url),
+        "title": _to_str(record.get("title")),
+        "company": _to_str(record.get("company")),
+        "location": _to_str(record.get("location")),
+        "job_type": _to_str(record.get("job_type")),
+        "is_remote": bool(_clean(record.get("is_remote")) or False),
+        "salary_min": lo,
+        "salary_max": hi,
+        "salary_currency": currency,
+        "salary_interval": interval,
+        "salary_display": _salary_display(lo, hi, currency, interval),
+        "description": _to_str(record.get("description")),
+        "job_url": job_url,
+        "date_posted": _to_date_str(record.get("date_posted")),
+        "search_term": query.get("search_term"),
+    }
+
+
+def _dedup(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[Optional[str], str]] = set()
+    out: list[dict[str, Any]] = []
+    for job in jobs:
+        key = (job.get("source_site"), job.get("external_id") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(job)
+    return out
+
+
+def _sample_jobs(queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deterministic stand-in postings so the demo works offline / when blocked.
+
+    Clearly labelled (source_site='sample') so it's never mistaken for live data.
+    """
+    term = (queries[0]["search_term"] if queries else "your field").strip()
+    location = (queries[0].get("location") if queries else None) or "Remote"
+    blueprint = [
+        ("Senior {t}", "Northwind Technologies", 110000, 140000, False),
+        ("{t}", "Acme Software", 85000, 110000, True),
+        ("Junior {t}", "BluePeak Solutions", 65000, 85000, False),
+        ("{t} (Contract)", "Helix Consulting", 70000, 95000, True),
+        ("Lead {t}", "Summit Digital", 130000, 165000, False),
+        ("Associate {t}", "Cedar & Co.", 60000, 78000, True),
+    ]
+    jobs: list[dict[str, Any]] = []
+    for i, (title_tpl, company, lo, hi, remote) in enumerate(blueprint):
+        title = title_tpl.format(t=term.title())
+        jobs.append(
+            {
+                "source_site": "sample",
+                "external_id": f"sample-{i}",
+                "title": title,
+                "company": company,
+                "location": "Remote" if remote else location,
+                "job_type": "contract" if "Contract" in title_tpl else "fulltime",
+                "is_remote": remote,
+                "salary_min": float(lo),
+                "salary_max": float(hi),
+                "salary_currency": "USD",
+                "salary_interval": "yearly",
+                "salary_display": _salary_display(float(lo), float(hi), "USD", "yearly"),
+                "description": (
+                    f"Sample posting for a {title} role. This placeholder is shown "
+                    "because no live results were available (JobSpy not installed, "
+                    "no network access, or the search returned nothing). Replace by "
+                    "running against live job boards."
+                ),
+                "job_url": "https://example.com/sample-posting",
+                "date_posted": None,
+                "search_term": term,
+            }
+        )
+    return jobs
+
+
+def scrape_jobs_for_queries(
+    queries: list[dict[str, Any]],
+    *,
+    sites: Optional[list[str]] = None,
+    results_wanted: int = RESULTS_PER_QUERY,
+    hours_old: int = HOURS_OLD,
+    allow_sample_fallback: bool = True,
+) -> dict[str, Any]:
+    """Run every query through JobSpy and return a normalised result bundle.
+
+    Returns ``{"jobs": [...], "source": "jobspy"|"sample", "sites": [...],
+    "errors": [...]}``. ``source`` is ``"sample"`` when the returned jobs are the
+    offline placeholders rather than live postings.
+    """
+    sites = sites or DEFAULT_SITES
+    errors: list[str] = []
+    collected: list[dict[str, Any]] = []
+    got_live = False
+
+    try:
+        from jobspy import scrape_jobs as _scrape  # heavy import, done lazily
+    except Exception as exc:  # pragma: no cover - depends on environment
+        _scrape = None
+        errors.append(f"JobSpy unavailable: {exc}")
+
+    if _scrape is not None:
+        for query in queries:
+            try:
+                df = _scrape(
+                    site_name=sites,
+                    search_term=query["search_term"],
+                    location=query.get("location") or None,
+                    results_wanted=results_wanted,
+                    hours_old=hours_old,
+                )
+                got_live = True
+                if df is not None and len(df):
+                    for record in df.to_dict("records"):
+                        collected.append(_normalise(record, query))
+            except Exception as exc:  # one bad query shouldn't sink the run
+                errors.append(f"{query['search_term']!r}: {exc}")
+
+    jobs = _dedup(collected)
+    if jobs:
+        return {"jobs": jobs, "source": "jobspy", "sites": sites, "errors": errors}
+
+    if allow_sample_fallback:
+        if got_live:
+            errors.append("Live scrape returned no postings; showing sample data.")
+        return {
+            "jobs": _sample_jobs(queries),
+            "source": "sample",
+            "sites": sites,
+            "errors": errors,
+        }
+
+    return {"jobs": [], "source": "jobspy", "sites": sites, "errors": errors}
