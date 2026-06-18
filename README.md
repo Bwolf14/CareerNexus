@@ -88,8 +88,9 @@ Open <http://localhost:8000/jobs>, drop a resume, and it will:
 
 1. parse the resume and pull **search terms** from it (current/recent job titles
    first, then top skills) — see [`job_scraper/queries.py`](job_scraper/queries.py),
-2. scrape matching postings with JobSpy (Indeed by default), normalising each to
-   the `jobs` table shape — [`job_scraper/scraper.py`](job_scraper/scraper.py),
+2. scrape matching postings with JobSpy (Indeed + ZipRecruiter + Glassdoor by
+   default), normalising each to the `jobs` table shape —
+   [`job_scraper/scraper.py`](job_scraper/scraper.py),
 3. store the run in **`job_searches`** and every posting in **`jobs`** (browsable
    in DBeaver, same database), and
 4. write a JSON file to `job_results/jobs_<id>.json` pairing the search context
@@ -102,7 +103,7 @@ works; the storage path is identical to a live run.
 
 | Env var                 | Default        | Purpose                                            |
 | ----------------------- | -------------- | -------------------------------------------------- |
-| `JOB_SITES`             | `indeed`       | Comma-separated boards (`indeed,zip_recruiter`, …) |
+| `JOB_SITES`             | `indeed,zip_recruiter,glassdoor` | Comma-separated boards (set to `indeed` for a faster demo) |
 | `JOB_COUNTRY`           | `Canada`       | Which country's Indeed site to search              |
 | `JOB_RESULTS_PER_QUERY` | `15`           | Postings requested per search term                 |
 | `JOB_HOURS_OLD`         | `168`          | Only postings newer than this many hours           |
@@ -113,9 +114,12 @@ works; the storage path is identical to a live run.
 > is set. It's `Canada` by default for this project; set it to `USA` (etc.) for
 > other regions.
 
-> **Note on LinkedIn:** JobSpy can scrape LinkedIn but it rate-limits hard and
-> needs rotating proxies for anything beyond a trickle. Indeed is the reliable,
-> no-proxy default; add other boards as the project grows.
+> **Note on boards:** Indeed, ZipRecruiter, and Glassdoor are the default trio —
+> all proxy-free and good for Canada/US. The same posting can appear on more than
+> one board (each is listed separately, tagged by `source_site`). Two boards are
+> *not* enabled by default: **LinkedIn** rate-limits hard and needs rotating
+> proxies, and **Google Jobs** needs a separate `google_search_term` query
+> format. ZipRecruiter only covers the US/Canada.
 
 ## Output shape
 

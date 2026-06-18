@@ -22,12 +22,13 @@ import math
 import os
 from typing import Any, Optional
 
-# Default to Indeed only: it's JobSpy's most reliable source and isn't
-# aggressively rate-limited, which keeps the synchronous demo fast. Override
-# with JOB_SITES="indeed,zip_recruiter" (LinkedIn needs proxies — see README).
+# Boards to scrape. Indeed, ZipRecruiter, and Glassdoor all work without proxies
+# and cover Canada/US well, so they're the default trio. LinkedIn needs rotating
+# proxies and Google Jobs needs a separate query format, so neither is included
+# by default — override with JOB_SITES (e.g. "indeed" alone for a faster demo).
 DEFAULT_SITES = [
     s.strip()
-    for s in os.environ.get("JOB_SITES", "indeed").split(",")
+    for s in os.environ.get("JOB_SITES", "indeed,zip_recruiter,glassdoor").split(",")
     if s.strip()
 ]
 

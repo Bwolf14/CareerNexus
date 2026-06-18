@@ -29,9 +29,10 @@ services:
       DB_NAME: careernexus_db
       DB_USER: career_app_user
       DB_PASSWORD: dbSecur3d
-      # Job scraper (JobSpy) settings. Indeed is the most reliable, no-proxy
-      # source; add zip_recruiter for more coverage. LinkedIn needs proxies.
-      JOB_SITES: indeed
+      # Job scraper (JobSpy) settings. These three boards need no proxies and
+      # cover Canada/US well. LinkedIn needs rotating proxies; Google Jobs needs
+      # a separate query format — neither is enabled here.
+      JOB_SITES: indeed,zip_recruiter,glassdoor
       # Which country's Indeed site to search. JobSpy defaults to the US site,
       # so Canadian locations need this set or they return nothing.
       JOB_COUNTRY: Canada
