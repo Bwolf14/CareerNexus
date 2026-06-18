@@ -32,6 +32,9 @@ services:
       # Job scraper (JobSpy) settings. Indeed is the most reliable, no-proxy
       # source; add zip_recruiter for more coverage. LinkedIn needs proxies.
       JOB_SITES: indeed
+      # Which country's Indeed site to search. JobSpy defaults to the US site,
+      # so Canadian locations need this set or they return nothing.
+      JOB_COUNTRY: Canada
       JOB_RESULTS_DIR: /app/job_results
     ports:
       - "8000:8000"

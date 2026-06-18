@@ -103,9 +103,15 @@ works; the storage path is identical to a live run.
 | Env var                 | Default        | Purpose                                            |
 | ----------------------- | -------------- | -------------------------------------------------- |
 | `JOB_SITES`             | `indeed`       | Comma-separated boards (`indeed,zip_recruiter`, …) |
+| `JOB_COUNTRY`           | `Canada`       | Which country's Indeed site to search              |
 | `JOB_RESULTS_PER_QUERY` | `15`           | Postings requested per search term                 |
 | `JOB_HOURS_OLD`         | `168`          | Only postings newer than this many hours           |
 | `JOB_RESULTS_DIR`       | `./job_results`| Where the JSON result files are written            |
+
+> **Note on `JOB_COUNTRY`:** JobSpy defaults Indeed to the US site, so a search
+> for a Canadian location (e.g. "Calgary, Alberta") returns nothing unless this
+> is set. It's `Canada` by default for this project; set it to `USA` (etc.) for
+> other regions.
 
 > **Note on LinkedIn:** JobSpy can scrape LinkedIn but it rate-limits hard and
 > needs rotating proxies for anything beyond a trickle. Indeed is the reliable,

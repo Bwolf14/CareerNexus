@@ -35,6 +35,11 @@ DEFAULT_SITES = [
 RESULTS_PER_QUERY = int(os.environ.get("JOB_RESULTS_PER_QUERY", "15"))
 HOURS_OLD = int(os.environ.get("JOB_HOURS_OLD", "168"))  # last 7 days
 
+# Which country's Indeed/Glassdoor site to search. JobSpy defaults to the US
+# site, so a "Calgary, Alberta" search on the US domain returns nothing — this
+# project is Canada-first, hence the default. Override with JOB_COUNTRY.
+COUNTRY_INDEED = os.environ.get("JOB_COUNTRY", "Canada")
+
 
 def _is_missing(value: Any) -> bool:
     """True for None or a pandas NaN/NaT float (the common 'empty cell' cases)."""
@@ -203,6 +208,7 @@ def scrape_jobs_for_queries(
     sites: Optional[list[str]] = None,
     results_wanted: int = RESULTS_PER_QUERY,
     hours_old: int = HOURS_OLD,
+    country_indeed: str = COUNTRY_INDEED,
     allow_sample_fallback: bool = True,
 ) -> dict[str, Any]:
     """Run every query through JobSpy and return a normalised result bundle.
@@ -231,6 +237,7 @@ def scrape_jobs_for_queries(
                     location=query.get("location") or None,
                     results_wanted=results_wanted,
                     hours_old=hours_old,
+                    country_indeed=country_indeed,
                 )
                 got_live = True
                 if df is not None and len(df):

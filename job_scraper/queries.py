@@ -18,6 +18,7 @@ list returned here with no other changes to the scraper.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 # Cap how many distinct queries we run per resume. Each query is a separate
@@ -26,12 +27,37 @@ from typing import Any, Optional
 MAX_QUERIES = 3
 MAX_SKILLS_IN_QUERY = 3
 
+# Trailing seniority/level markers that hurt a keyword search more than they
+# help — "Machine Operator 1" finds far fewer postings than "Machine Operator".
+# Anchored on the number/numeral so an optional "Level"/"Grade"/… word in front
+# of it is removed as one unit ("Technician Level 2" -> "Technician").
+_LEVEL_SUFFIX = re.compile(
+    r"\s*[-,–]?\s*\b(?:(?:level|lvl|tier|grade|class)\s+)?"
+    r"(?:i{1,3}|iv|v|[1-5])\b\.?$",
+    re.IGNORECASE,
+)
+
 
 def _clean(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
     text = " ".join(str(value).split()).strip()
     return text or None
+
+
+def _simplify_title(value: Optional[str]) -> Optional[str]:
+    """Trim a job title into a better keyword search term.
+
+    Strips a trailing seniority level ("Operator 1" -> "Operator", "Analyst II"
+    -> "Analyst"), which broadens the match without changing the role. Applied
+    once; "Machine Operator 1 2" isn't a real title.
+    """
+    term = _clean(value)
+    if not term:
+        return None
+    stripped = _LEVEL_SUFFIX.sub("", term).strip()
+    # Don't strip away the whole thing (e.g. a title that's just "II").
+    return stripped or term
 
 
 def _looks_like_skill(value: str) -> bool:
@@ -75,11 +101,11 @@ def build_queries_from_resume(parsed: dict[str, Any]) -> list[dict[str, Any]]:
     for exp in experience:
         dates = exp.get("dates") or {}
         if dates.get("is_current"):
-            add(exp.get("title"), "current_title")
+            add(_simplify_title(exp.get("title")), "current_title")
 
     # 2) Other recent titles, in resume order (usually newest first).
     for exp in experience:
-        add(exp.get("title"), "past_title")
+        add(_simplify_title(exp.get("title")), "past_title")
 
     # 3) Skills fallback — only really needed when there are no usable titles,
     #    but it's a cheap extra angle even when there are.
