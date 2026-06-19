@@ -31,13 +31,21 @@
     .empty { color: var(--muted); padding: 1rem 0; }
     .err { background:#7f1d1d; border:1px solid #b91c1c; color:#fecaca;
            padding:.75rem 1rem; border-radius:8px; margin-top:1rem; font-size:.9rem; }
+    .tabs { display:flex; gap:.5rem; margin-bottom:1.5rem; flex-wrap:wrap; }
+    .tabs a { padding:.5rem 1rem; border-radius:999px; font-weight:600; font-size:.92rem;
+              color:var(--muted); text-decoration:none; border:1px solid var(--border); background:var(--card); }
+    .tabs a:hover { color:var(--text); text-decoration:none; border-color:var(--accent); }
+    .tabs a.active { color:#04293a; background:var(--accent); border-color:var(--accent); }
   </style>
 </head>
 <body>
   <div class="wrap">
+    <nav class="tabs">
+      <a href="/" class="active">📄 Resume Parser</a>
+      <a href="/jobs">🔍 Job Finder</a>
+    </nav>
     <h1>Career Nexus Resume Parser</h1>
     <p class="sub">Drop a PDF or DOCX resume — it's parsed, stored in the database, and the JSON is available to download.</p>
-    <p class="sub" style="margin-top:.5rem;">Looking for jobs? Try the <a href="/jobs">Job Finder</a> — it scrapes live postings that match a resume.</p>
 
     <div class="card">
       <form id="form" action="/upload" method="post" enctype="multipart/form-data">

@@ -39,11 +39,19 @@
     .badge.salary { color:#fcd34d; border-color:#92400e; }
     .desc { color:var(--muted); font-size:.88rem; line-height:1.5; margin-top:.5rem; }
     .empty { color:var(--muted); padding:1rem 0; }
+    .tabs { display:flex; gap:.5rem; margin-bottom:1.5rem; flex-wrap:wrap; }
+    .tabs a { padding:.5rem 1rem; border-radius:999px; font-weight:600; font-size:.92rem;
+              color:var(--muted); text-decoration:none; border:1px solid var(--border); background:var(--card); }
+    .tabs a:hover { color:var(--text); text-decoration:none; border-color:var(--accent); }
+    .tabs a.active { color:#04293a; background:var(--accent); border-color:var(--accent); }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <p class="nav"><a href="/jobs">← Job finder</a></p>
+    <nav class="tabs">
+      <a href="/">📄 Resume Parser</a>
+      <a href="/jobs" class="active">🔍 Job Finder</a>
+    </nav>
     <h1>Job matches</h1>
 
     {% if error %}

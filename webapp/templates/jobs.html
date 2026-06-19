@@ -51,11 +51,19 @@
     .tag { display:inline-block; padding:.1rem .5rem; border-radius:999px; font-size:.75rem;
            font-weight:600; background:#0b1220; border:1px solid var(--border); color:var(--muted); }
     .spinner { display:none; margin-top:1rem; color:var(--muted); font-size:.9rem; }
+    .tabs { display:flex; gap:.5rem; margin-bottom:1.5rem; flex-wrap:wrap; }
+    .tabs a { padding:.5rem 1rem; border-radius:999px; font-weight:600; font-size:.92rem;
+              color:var(--muted); text-decoration:none; border:1px solid var(--border); background:var(--card); }
+    .tabs a:hover { color:var(--text); text-decoration:none; border-color:var(--accent); }
+    .tabs a.active { color:#04293a; background:var(--accent); border-color:var(--accent); }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <p class="nav"><a href="/">← Resume parser</a></p>
+    <nav class="tabs">
+      <a href="/">📄 Resume Parser</a>
+      <a href="/jobs" class="active">🔍 Job Finder</a>
+    </nav>
     <h1>Career Nexus Job Finder</h1>
     <p class="sub">Drop a resume — we pull search terms out of it, scrape live job
        postings that match, and store the results for the matching step later.</p>
