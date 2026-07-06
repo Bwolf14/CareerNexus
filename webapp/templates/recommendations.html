@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Your career plan — Career Nexus{% endblock %}
+
+{% block content %}
+  <h1>Your career plan</h1>
+  <p class="sub">{% if contact_name %}<strong>{{ contact_name }}</strong> — {% endif %}from the
+     <strong>{{ total_jobs }}</strong> postings we found, here are the
+     <strong>{{ picks | length }}</strong> most worth your time, why we picked them, and what
+     would make your applications stronger.</p>
+
+  <div class="banner ai">
+    <strong>🤖 AI matching coming soon.</strong> Today this shortlist is ranked by a transparent
+    heuristic — skill overlap, title fit, and your answers (pay range, work style, preferred
+    skills). The AI step will replace these bullet-point reasons with real analysis of growth
+    fit and company culture, and can re-run the search based on your goals.
+  </div>
+
+  {% for note in notes %}
+    <div class="banner warn">{{ note }}</div>
+  {% endfor %}
+
+  {% if not answered %}
+    <div class="banner info">You skipped the follow-up questions, so this ranking uses your resume
+      alone. <a href="/questions/{{ search_id }}">Answer them</a> to factor in pay range, work
+      style, and the skills you want to use.</div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Top picks ({{ picks | length }} of {{ total_jobs }})</h2>
+    {% if picks %}
+      {% for pick in picks %}
+        {% set job = pick.job %}
+        <div class="match">
+          <div class="head">
+            <div>
+              <div class="rank">#{{ loop.index }} PICK</div>
+              <h3 style="margin:.15rem 0 .2rem; font-size:1.08rem;">
+                {% if job.job_url %}<a href="{{ job.job_url }}" target="_blank" rel="noopener">{{ job.title or 'Untitled posting' }}</a>
+                {% else %}{{ job.title or 'Untitled posting' }}{% endif %}
+              </h3>
+              <div>
+                <span class="company">{{ job.company or 'Unknown company' }}</span>
+                {% if job.location %}<span class="jobmeta"> · {{ job.location }}</span>{% endif %}
+              </div>
+              <div style="margin-top:.35rem;">
+                {% if job.salary_display %}<span class="badge salary">{{ job.salary_display }}</span>{% endif %}
+                {% if job.is_remote %}<span class="badge remote">Remote</span>{% endif %}
+                {% if job.job_type %}<span class="badge">{{ job.job_type }}</span>{% endif %}
+                {% if job.source_site %}<span class="badge">{{ job.source_site }}</span>{% endif %}
+                {% if job.date_posted %}<span class="badge">Posted {{ job.date_posted }}</span>{% endif %}
+              </div>
+            </div>
+            <div class="scorebox">
+              <div class="num">{{ pick.score }}</div>
+              <div class="lbl">MATCH SCORE</div>
+              <div class="scorebar"><i style="width:{{ pick.score }}%;"></i></div>
+            </div>
+          </div>
+
+          <ul class="whylist">
+            {% for reason in pick.reasons %}<li>{{ reason }}</li>{% endfor %}
+            {% for concern in pick.concerns %}<li class="concern">{{ concern }}</li>{% endfor %}
+            {% if not pick.reasons and not pick.concerns %}
+              <li class="concern">Limited signal — this posting matched your search terms, but we
+                couldn't verify skill overlap from its description.</li>
+            {% endif %}
+          </ul>
+
+          {% if job.job_url %}
+            <div class="actions" style="margin-top:.8rem;">
+              <a class="btn secondary" href="{{ job.job_url }}" target="_blank" rel="noopener">View &amp; apply ↗</a>
+            </div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="empty">No postings were stored for this search, so there's nothing to rank.
+        <a href="/">Start a new session</a>.</p>
+    {% endif %}
+  </div>
+
+  <div class="grid2" style="margin-top:1.4rem;">
+    <div class="card">
+      <h2>How to improve your resume</h2>
+      {% if tips %}
+        {% for tip in tips %}
+          <div class="tip">
+            <span class="sev {{ tip.severity }}"></span>
+            <div>
+              <h3>{{ tip.title }}</h3>
+              <p>{{ tip.detail }}</p>
+            </div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <p class="empty">Nothing jumped out — your resume covers the fundamentals well.</p>
+      {% endif %}
+      <div class="banner ai" style="margin-top:1.1rem;">
+        <strong>Coming soon:</strong> AI-tailored rewrites — bullet-point suggestions written
+        against the specific postings above.
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Certifications to consider</h2>
+      {% if certs.gaps %}
+        <p class="sub" style="font-size:.87rem;">How often each certification shows up in your
+           {{ certs.total_jobs }} matched postings — starting with ones you don't have listed:</p>
+        {% for gap in certs.gaps %}
+          <div class="meter">
+            <span title="{{ gap.category }}">{{ gap.name }}</span>
+            <div class="bar"><i style="width:{{ gap.job_pct }}%;"></i></div>
+            <span class="val">{{ gap.job_pct }}%</span>
+          </div>
+          <div class="hint" style="margin:-.2rem 0 .5rem;">{{ gap.message }}</div>
+        {% endfor %}
+      {% else %}
+        <p class="empty">None of the matched postings called for certifications you're missing.</p>
+      {% endif %}
+
+      {% if certs.held %}
+        <h3 style="margin-top:1.2rem; color:var(--muted);">Already on your resume</h3>
+        {% for held in certs.held %}
+          <div class="meter">
+            <span>✓ {{ held.name }}</span>
+            <div class="bar"><i class="ok" style="width:{{ held.job_pct }}%;"></i></div>
+            <span class="val">{{ held.job_pct }}%</span>
+          </div>
+        {% endfor %}
+      {% endif %}
+      {% if certs.unrecognized_held %}
+        <p class="hint" style="margin-top:.8rem;">Also listed on your resume:
+          {{ certs.unrecognized_held | join(', ') }}.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if answers_display %}
+  <div class="card">
+    <h2>What you told us</h2>
+    <p class="sub" style="font-size:.87rem;">Stored with this search — the future AI matcher will
+       use these answers as its interview context.</p>
+    <div class="tablewrap">
+      <table>
+        <tbody>
+          {% for item in answers_display %}
+            <tr>
+              <td style="color:var(--muted); width:45%;">{{ item.prompt }}</td>
+              <td>{{ item.answer }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="actions">
+      <a class="btn ghost" href="/questions/{{ search_id }}">Change my answers</a>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Take it with you</h2>
+    <div class="actions" style="margin-top:.4rem;">
+      {% if search_id %}<a class="btn" href="/jobs/download/{{ search_id }}">Download jobs JSON</a>{% endif %}
+      {% if resume_id %}<a class="btn secondary" href="/download/{{ resume_id }}">Download resume JSON</a>{% endif %}
+      {% if search_id %}<a class="btn secondary" href="/matches/{{ search_id }}">See all {{ total_jobs }} postings</a>{% endif %}
+      <a class="btn ghost" href="/">Start a new session</a>
+    </div>
+  </div>
+{% endblock %}

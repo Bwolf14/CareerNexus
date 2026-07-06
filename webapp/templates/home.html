@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Career Nexus — Find jobs that fit your career{% endblock %}
+
+{% block content %}
+  <section class="hero">
+    <h1>Upload your resume.<br/>We'll find jobs <span class="accent">worth applying to</span>.</h1>
+    <p class="sub">Career Nexus parses your resume, searches live job boards for roles
+       that match your experience, asks a few follow-up questions about where you want
+       to go, and builds a shortlist with the reasoning to back it up — plus advice on
+       your resume and the certifications your target market is asking for.</p>
+
+    <div class="howitworks">
+      <div class="step"><span class="n">STEP 1</span><h3>Upload</h3>
+        <p>Drop in your resume as PDF or DOCX. It's parsed instantly — no account needed.</p></div>
+      <div class="step"><span class="n">STEP 2</span><h3>Review profile</h3>
+        <p>Check what we extracted: roles, skills, education, certifications.</p></div>
+      <div class="step"><span class="n">STEP 3</span><h3>Job search</h3>
+        <p>We search live postings on Indeed, ZipRecruiter &amp; Glassdoor that match your background.</p></div>
+      <div class="step"><span class="n">STEP 4</span><h3>Tell us more <span class="badge ai">AI soon</span></h3>
+        <p>A few follow-up questions about goals, pay, and how you like to work.</p></div>
+      <div class="step"><span class="n">STEP 5</span><h3>Your plan</h3>
+        <p>A ranked shortlist with reasons, resume advice, and certification gaps.</p></div>
+    </div>
+  </section>
+
+  <div class="card">
+    <h2>Start with your resume</h2>
+    <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+      <label class="drop" id="drop">
+        <input type="file" id="file" name="resume" accept=".pdf,.docx" required />
+        <p class="big"><strong>Click to choose</strong> or drag &amp; drop your resume here</p>
+        <p>PDF or DOCX · up to 16&nbsp;MB · parsed locally, stored in your database</p>
+      </label>
+      <div class="filename" id="filename"></div>
+      <div class="actions">
+        <button class="btn big" id="submit" type="submit" disabled>Parse my resume →</button>
+        <span class="spinner" id="spinner">Parsing your resume…</span>
+      </div>
+    </form>
+  </div>
+
+  <div class="card" id="history">
+    <h2>Recent sessions</h2>
+    {% if db_error %}
+      <div class="banner error">Could not reach the database: {{ db_error }}</div>
+    {% else %}
+      {% if searches %}
+        <p class="sub" style="font-size:.88rem;">Pick up where you left off — every search keeps its
+           matches, questionnaire, and career plan.</p>
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr><th>#</th><th>Who</th><th>Searched for</th><th>Results</th><th>Source</th><th>When</th><th></th></tr>
+            </thead>
+            <tbody>
+              {% for s in searches %}
+              <tr>
+                <td>{{ s.id }}</td>
+                <td>{{ s.username or '—' }}</td>
+                <td>{{ s.search_terms }}</td>
+                <td>{{ s.results_count }}</td>
+                <td><span class="src {{ 'live' if s.source != 'sample' else 'sample' }}">{{ s.source }}</span></td>
+                <td>{{ s.ran_at }}</td>
+                <td style="white-space:nowrap;">
+                  <a href="/matches/{{ s.id }}">Matches</a> ·
+                  <a href="/recommendations/{{ s.id }}">Plan</a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="empty">No sessions yet — upload a resume above to run your first search.</p>
+      {% endif %}
+
+      {% if resumes %}
+        <details class="advanced" style="margin-top:1.3rem;">
+          <summary>Parsed resumes ({{ resumes | length }})</summary>
+          <div class="inner tablewrap">
+            <table>
+              <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Uploaded</th><th></th></tr></thead>
+              <tbody>
+                {% for r in resumes %}
+                <tr>
+                  <td>{{ r.id }}</td>
+                  <td>{{ r.username }}</td>
+                  <td>{{ r.email }}</td>
+                  <td>{{ r.upload_date }}</td>
+                  <td style="white-space:nowrap;"><a href="/profile/{{ r.id }}">Open profile</a> ·
+                      <a href="/download/{{ r.id }}">JSON</a></td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      {% endif %}
+    {% endif %}
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const drop = document.getElementById('drop');
+  const file = document.getElementById('file');
+  const submit = document.getElementById('submit');
+  const filename = document.getElementById('filename');
+  const form = document.getElementById('upload-form');
+  const spinner = document.getElementById('spinner');
+
+  function update() {
+    if (file.files.length) {
+      filename.textContent = '✓ ' + file.files[0].name;
+      submit.disabled = false;
+    } else {
+      filename.textContent = '';
+      submit.disabled = true;
+    }
+  }
+  file.addEventListener('change', update);
+  ['dragover', 'dragenter'].forEach(ev =>
+    drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('drag'); }));
+  ['dragleave', 'drop'].forEach(ev =>
+    drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('drag'); }));
+  drop.addEventListener('drop', e => {
+    if (e.dataTransfer.files.length) { file.files = e.dataTransfer.files; update(); }
+  });
+  form.addEventListener('submit', () => {
+    submit.disabled = true;
+    spinner.style.display = 'inline-block';
+  });
+</script>
+{% endblock %}

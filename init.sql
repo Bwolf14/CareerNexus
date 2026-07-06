@@ -116,6 +116,22 @@ CREATE TABLE IF NOT EXISTS jobs (
     FOREIGN KEY (search_id) REFERENCES job_searches(id) ON DELETE CASCADE
 );
 
+-- One row per completed follow-up questionnaire. The answers JSON is keyed by
+-- question id (see job_matcher/questions.py) and is re-fed into the heuristic
+-- ranking today; later it becomes part of the AI matcher's context. One plan
+-- per search (re-answering overwrites).
+CREATE TABLE IF NOT EXISTS career_plans (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    search_id INT NOT NULL,
+    resume_id INT,
+    answers JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_plan_per_search (search_id),
+    FOREIGN KEY (search_id) REFERENCES job_searches(id) ON DELETE CASCADE,
+    FOREIGN KEY (resume_id) REFERENCES user_resumes(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS job_skills (
     job_id INT,
     skill_id INT,

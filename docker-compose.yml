@@ -43,6 +43,14 @@ services:
       # Persist the generated job-search JSON files outside the container so
       # they're easy to inspect / hand to the AI matcher later.
       - ./job_results:/app/job_results
+    healthcheck:
+      # /health returns 200 when the app and its DB connection are good, 503
+      # when degraded — so `docker compose ps` shows the real state.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
 volumes:
   db_data:

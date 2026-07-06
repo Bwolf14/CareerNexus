@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Job matches — Career Nexus{% endblock %}
+
+{% block content %}
+  <h1>Job matches</h1>
+  <p class="sub">Everything we found that matches your background{% if contact_name %},
+     <strong>{{ contact_name }}</strong>{% endif %}. Next, a few quick questions
+     narrow this down to a shortlist worth applying to.</p>
+
+  <div class="card">
+    <div class="profile-head">
+      <div>
+        <p style="margin:0 0 .4rem;">
+          Data source:
+          <span class="src {{ 'live' if source != 'sample' else 'sample' }}">
+            {{ 'LIVE — ' ~ (sites | join(', ')) if source != 'sample' else 'SAMPLE DATA' }}
+          </span>
+        </p>
+        <p class="jobmeta" style="margin:0 0 .3rem;">Searched for:</p>
+        <div>
+          {% for term in search_terms %}<span class="pill">{{ term }}</span>{% endfor %}
+          {% if location %}<span class="pill">📍 {{ location }}</span>{% endif %}
+          {% if settings %}
+            {% set wt = {'any': 'Any work type', 'remote': 'Remote only', 'local': 'On-site / local'} %}
+            <span class="pill">💼 {{ wt.get(settings.work_type, settings.work_type) }}</span>
+            <span class="pill">🌐 {{ settings.country }}</span>
+          {% endif %}
+        </div>
+        <p class="count-note" style="margin:.8rem 0 0;">
+          <strong>{{ job_count }}</strong> posting{{ '' if job_count == 1 else 's' }} found
+          {% if search_id %} · stored as search <strong>#{{ search_id }}</strong>{% endif %}
+        </p>
+      </div>
+      <div style="text-align:right;">
+        {% if search_id %}
+          <a class="btn big" href="/questions/{{ search_id }}">Continue: tell us more →</a>
+          <div class="hint" style="margin-top:.5rem;">4–8 quick questions → your personalised shortlist</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if source == 'sample' %}
+      <div class="banner warn">These are <strong>sample postings</strong> — no live results were
+        available (network blocked, JobSpy missing, or the search returned nothing). The rest of
+        the flow works identically on sample data.</div>
+    {% endif %}
+    {% if db_error %}<div class="banner warn"><strong>Database note:</strong> {{ db_error }}</div>{% endif %}
+    {% if errors %}
+      <div class="banner info"><strong>Scraper notes:</strong>
+        <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+      </div>
+    {% endif %}
+
+    <div class="actions">
+      {% if search_id %}<a class="btn secondary" href="/jobs/download/{{ search_id }}">Download jobs JSON</a>{% endif %}
+      {% if resume_id %}<a class="btn ghost" href="/profile/{{ resume_id }}">← Back to profile</a>{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="profile-head" style="margin-bottom:.4rem;">
+      <h2 style="margin:0;">All postings</h2>
+      <input class="filter-input" type="text" id="filter" placeholder="Filter by title, company, location…" />
+    </div>
+    {% if jobs %}
+      <div id="joblist">
+        {% for job in jobs %}
+          <div class="job" data-text="{{ ((job.title or '') ~ ' ' ~ (job.company or '') ~ ' ' ~ (job.location or '')) | lower }}">
+            <h3>
+              {% if job.job_url %}<a href="{{ job.job_url }}" target="_blank" rel="noopener">{{ job.title or 'Untitled posting' }}</a>
+              {% else %}{{ job.title or 'Untitled posting' }}{% endif %}
+            </h3>
+            <div>
+              <span class="company">{{ job.company or 'Unknown company' }}</span>
+              {% if job.location %}<span class="jobmeta"> · {{ job.location }}</span>{% endif %}
+            </div>
+            <div style="margin:.4rem 0 0;">
+              {% if job.salary_display %}<span class="badge salary">{{ job.salary_display }}</span>{% endif %}
+              {% if job.is_remote %}<span class="badge remote">Remote</span>{% endif %}
+              {% if job.job_type %}<span class="badge">{{ job.job_type }}</span>{% endif %}
+              {% if job.source_site %}<span class="badge">{{ job.source_site }}</span>{% endif %}
+              {% if job.date_posted %}<span class="badge">Posted {{ job.date_posted }}</span>{% endif %}
+              {% if job.search_term %}<span class="badge">↳ {{ job.search_term }}</span>{% endif %}
+            </div>
+            {% if job.description %}
+              <div class="desc">{{ job.description[:320] }}{% if job.description | length > 320 %}…{% endif %}</div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+      <p class="empty" id="nofilter" style="display:none;">No postings match that filter.</p>
+    {% else %}
+      <p class="empty">No postings to show.</p>
+    {% endif %}
+  </div>
+
+  {% if search_id %}
+  <div class="actions" style="justify-content:center;">
+    <a class="btn big" href="/questions/{{ search_id }}">Continue: tell us more →</a>
+  </div>
+  {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const filter = document.getElementById('filter');
+  if (filter) {
+    filter.addEventListener('input', () => {
+      const q = filter.value.trim().toLowerCase();
+      let visible = 0;
+      document.querySelectorAll('#joblist .job').forEach(el => {
+        const show = !q || el.dataset.text.includes(q);
+        el.style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+      document.getElementById('nofilter').style.display = visible ? 'none' : '';
+    });
+  }
+</script>
+{% endblock %}

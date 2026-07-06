@@ -1,0 +1,15 @@
+# Keep the image build context (and layers) lean: no VCS, caches, test
+# suites, or locally generated artifacts.
+.git
+.gitignore
+**/__pycache__
+*.pyc
+.pytest_cache
+job_results
+db_data
+resume_parser/tests
+job_matcher/tests
+webapp/tests
+conftest.py
+requirements-dev.txt
+*.md

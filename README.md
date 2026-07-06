@@ -1,13 +1,24 @@
-# Career Nexus Resume Parser
+# Career Nexus
 
-Parse **PDF** and **DOCX** resumes into a validated, JSON-serializable
-`ParsedResume` object — pure parsing logic (regex, font/style heuristics,
-library-based extraction), **no AI/LLM dependency**.
+Upload a resume → review the parsed profile → search live job boards → answer
+a short questionnaire → get a ranked shortlist with reasoning, resume advice,
+and certification gaps. Everything except the AI reasoning runs **today, with
+no AI/LLM dependency** — the AI-powered pieces (tailored interview questions,
+richer match reasoning) are clearly-labelled placeholders that slot in later.
 
-This is the implementation of the design in
-[`resume_parser_blueprint.md`](resume_parser_blueprint.md). The parser's
-output (`schema.py`) is a fixed contract consumed by downstream Career Nexus
-components (profiling chatbot, compatibility scoring, gap analysis, resume
+Subsystems, each usable on its own:
+
+| Package          | What it does                                                        |
+| ---------------- | ------------------------------------------------------------------- |
+| `resume_parser/` | PDF/DOCX → validated `ParsedResume` JSON (regex/layout heuristics)  |
+| `job_scraper/`   | parsed resume → job-board queries → live postings via JobSpy        |
+| `job_matcher/`   | heuristic ranking, certification-demand analysis, template questions, resume tips |
+| `webapp/`        | the guided five-step Flask UI wiring it all together                |
+
+The parser is the implementation of the design in
+[`resume_parser_blueprint.md`](resume_parser_blueprint.md). Its
+output (`schema.py`) is a fixed contract consumed by every downstream
+component (profiling chatbot, compatibility scoring, gap analysis, resume
 guidance, cover-letter assistance).
 
 ## Install
@@ -38,30 +49,57 @@ python -m resume_parser path/to/resume.docx -o out.json
 
 ## Web UI + database (Docker)
 
-The whole stack runs with one command — a browser UI for dropping resumes in,
-and a MariaDB database that the parsed results are written to:
+The whole stack runs with one command — the guided web flow plus a MariaDB
+database everything is written to:
 
 ```bash
 docker compose up --build
 ```
 
-Then open <http://localhost:8000>. Drop a PDF/DOCX onto the page and it will be:
+Then open <http://localhost:8000> and follow the five steps:
 
-1. parsed with `parse_resume()`,
-2. stored in the database (full JSON in `user_resumes.parsed_data`, plus
-   normalised rows in `users`, `skills`/`user_skills`, `resume_experience`,
-   and `resume_education`), and
-3. offered back as a downloadable JSON file (also re-downloadable later from the
-   list on the home page, or directly at `/download/<id>`).
+1. **Upload** — drop a PDF/DOCX resume; it's parsed with `parse_resume()` and
+   stored (full JSON in `user_resumes.parsed_data`, plus normalised rows in
+   `users`, `skills`/`user_skills`, `resume_experience`, `resume_education`).
+2. **Your profile** (`/profile/<id>`) — review the extracted contact info,
+   experience timeline, education, skills, certifications, and parser
+   warnings; tweak search options (keywords, location, work type, region,
+   which job boards to hit).
+3. **Job matches** (`/matches/<id>`) — every posting the scrape found, with a
+   client-side filter, salary/remote badges, and a live/sample source badge.
+4. **Follow-up questions** (`/questions/<id>`) — 4–8 questions built from the
+   resume with templates today (the AI interviewer replaces this later):
+   "tell me more about project X", "where do you see yourself in 5–10
+   years?", pay range, work style, priorities. Every question is optional and
+   answers are stored with the search (`career_plans` table, with a JSON-file
+   fallback in `job_results/`).
+5. **Your career plan** (`/recommendations/<id>`) — the top 5–10 postings
+   ranked by a transparent heuristic (skill overlap, title fit, pay-range and
+   work-style fit, recency) with per-job reasons and concerns, plus
+   **resume-improvement tips** and a **certification-demand analysis**
+   ("78% of your matched jobs mention CCNA — consider earning it").
+
+Previous sessions are listed on the home page; each keeps its matches,
+questionnaire answers, and career plan. Resume/jobs JSON stay downloadable
+(`/download/<id>`, `/jobs/download/<id>`) — those two files are exactly what
+the future AI matcher consumes.
 
 No extra setup is required: the `db` service initialises the schema from
 [`init.sql`](init.sql) on first run, and the `web` service waits for the DB to
 become healthy before serving. Connect a client like DBeaver to
 `localhost:3306` (database `careernexus_db`) to browse the stored data.
 
+> **Upgrading an existing checkout:** the schema now includes a
+> `career_plans` table. `init.sql` only runs when the DB volume is first
+> created, so pre-existing volumes need either `docker compose down -v`
+> (wipes stored data) or a one-off
+> `docker compose exec db mariadb -uroot -pCareerNexPass32 careernexus_db < init.sql`.
+> Without it the app still works — questionnaire answers just fall back to
+> JSON files in `job_results/`.
+
 | Service | Image / build      | Port  | Notes                                      |
 | ------- | ------------------ | ----- | ------------------------------------------ |
-| `web`   | `./Dockerfile`     | 8000  | Flask + gunicorn upload UI                 |
+| `web`   | `./Dockerfile`     | 8000  | Flask + gunicorn guided flow (healthcheck on `/health`) |
 | `db`    | `mariadb:10.6`     | 3306  | schema from `init.sql`, data in a volume   |
 
 Running the web app outside Docker (for development):
@@ -80,22 +118,21 @@ DB connection settings are read from the `DB_HOST`, `DB_PORT`, `DB_NAME`,
 A separate subsystem ([`job_scraper/`](job_scraper/)) turns a parsed resume into
 job-board searches and pulls live postings via
 [JobSpy](https://github.com/speedyapply/JobSpy). It shares nothing with the
-parser except the parsed-resume dict, so it can evolve independently — and later
-feed an AI matching step that ranks postings against the resume and suggests
-certifications to close gaps.
+parser except the parsed-resume dict, so it can evolve independently.
 
-Open <http://localhost:8000/jobs>, drop a resume, and it will:
+A search kicked off from the profile page will:
 
-1. parse the resume and pull **search terms** from it (current/recent job titles
-   first, then top skills) — see [`job_scraper/queries.py`](job_scraper/queries.py),
+1. pull **search terms** from the resume (current/recent job titles first,
+   then top skills, plus any user keywords) —
+   see [`job_scraper/queries.py`](job_scraper/queries.py),
 2. scrape matching postings with JobSpy (Indeed + ZipRecruiter + Glassdoor by
-   default), normalising each to the `jobs` table shape —
-   [`job_scraper/scraper.py`](job_scraper/scraper.py),
+   default; LinkedIn can be ticked on per-search in the UI), normalising each
+   to the `jobs` table shape — [`job_scraper/scraper.py`](job_scraper/scraper.py),
 3. store the run in **`job_searches`** and every posting in **`jobs`** (browsable
    in DBeaver, same database), and
 4. write a JSON file to `job_results/jobs_<id>.json` pairing the search context
    with the postings — ready to hand to the AI matcher alongside the resume JSON
-   (also downloadable from the results page or at `/jobs/download/<id>`).
+   (also downloadable at `/jobs/download/<id>`).
 
 If JobSpy is unavailable, the network is blocked, or a search returns nothing,
 the page falls back to clearly-labelled **sample** postings so the demo still
@@ -120,6 +157,31 @@ works; the storage path is identical to a live run.
 > *not* enabled by default: **LinkedIn** rate-limits hard and needs rotating
 > proxies, and **Google Jobs** needs a separate `google_search_term` query
 > format. ZipRecruiter only covers the US/Canada.
+
+## Job matcher (the "AI" that isn't AI yet)
+
+[`job_matcher/`](job_matcher/) powers the questionnaire and career-plan pages
+deterministically, so the whole product works end-to-end before any model is
+integrated:
+
+- **`scoring.py`** — ranks postings 0–100 against the resume + answers: skill
+  overlap (word-boundary matching, so `C++`/`A+` behave), title-token
+  alignment, work-style fit, pay-range fit (hourly↔yearly normalised), and
+  recency. Every pick carries human-readable `reasons` and `concerns`.
+- **`certifications.py`** — a ~45-entry certification dictionary (IT-focused:
+  CCNA/CCNP, CompTIA, AWS/Azure/GCP, CISSP…, plus trades, healthcare, finance,
+  PM, food service, and more). Scans posting text, reports demand percentages,
+  and separates *gaps* from certifications the resume already holds.
+- **`questions.py`** — template-generates the 4–8 follow-up questions from the
+  resume ("You listed the project **X** — tell me more", 5–10 year goals, pay
+  range, work style, preferred skills). Same output shape the AI interviewer
+  will produce later.
+- **`resume_tips.py`** — actionable resume advice from the parsed structure:
+  missing contact info/summary, thin or unquantified bullets, sparse skills,
+  ATS-hostile formatting (from parser warnings), and the top certification gap.
+
+When the AI step lands, it replaces the *content* of these outputs (reasons,
+question wording, tips) — the plumbing and UI stay as-is.
 
 ## Output shape
 
@@ -181,16 +243,22 @@ one-line change, no code edit.
 ## Tests
 
 ```bash
-python -m pytest resume_parser/tests/ -q
+python -m pytest -q          # parser + matcher + web routes (no DB/network needed)
 ```
 
-- **Unit tests** drive the field parsers, segmenter, and normalizer with
-  synthetic `TextBlock` lists — no real files needed.
-- **Integration tests** synthesize representative resumes (single-column PDF,
-  two-column/sidebar PDF, DOCX heading-styles, DOCX manual-bold, sidebar
+- **Parser tests** (`resume_parser/tests/`) drive the field parsers,
+  segmenter, and normalizer with synthetic `TextBlock` lists, plus
+  integration tests over synthesized representative resumes (single-column
+  PDF, two-column/sidebar PDF, DOCX heading-styles, DOCX manual-bold, sidebar
   layout-table DOCX, a no-headers "failed" case, and a scanned-like empty
-  PDF), assert schema validity, and spot-check key fields. See
+  PDF). See
   [`tests/sample_resumes/README.md`](resume_parser/tests/sample_resumes/README.md).
+- **Matcher tests** (`job_matcher/tests/`) cover scoring/ranking, answer
+  handling (pay range, work style), certification gap/held detection with
+  word-boundary edge cases, question generation, and resume tips.
+- **Web tests** (`webapp/tests/`) exercise the full five-step flow through
+  Flask's test client with the DB and scraper stubbed — including the
+  degraded paths (DB down, skipped questionnaire, legacy URL redirects).
 
 ## Known limitations (v2 backlog)
 

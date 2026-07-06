@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Something went wrong — Career Nexus{% endblock %}
+
+{% block content %}
+  <h1>{{ heading or 'Something went wrong' }}</h1>
+  <div class="card">
+    <div class="banner error" style="margin-top:0;">{{ error }}</div>
+    <div class="actions">
+      <a class="btn" href="{{ back_url or '/' }}">← {{ back_label or 'Back to start' }}</a>
+    </div>
+  </div>
+{% endblock %}

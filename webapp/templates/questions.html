@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Follow-up questions — Career Nexus{% endblock %}
+
+{% block content %}
+  <h1>Tell us more</h1>
+  <p class="sub">Your resume says where you've been — these questions tell us where you
+     want to go. Answers sharpen the shortlist on the next page{% if job_count %},
+     picked from the <strong>{{ job_count }}</strong> postings we found{% endif %}.</p>
+
+  <div class="banner ai">
+    <strong>🤖 AI interviewer coming soon.</strong> These questions are generated from your
+    resume with templates today. Once the AI profiling step is wired in, it will read your
+    resume <em>and</em> the matched postings, ask sharper follow-ups, and re-search job boards
+    based on your answers.
+  </div>
+
+  <div class="card">
+    <form id="q-form" action="/questions/{{ search_id }}" method="post">
+      {% for q in questions %}
+        <div class="question">
+          <div class="qnum">QUESTION {{ loop.index }} OF {{ questions | length }}
+            {% if q.origin == 'resume' %}<span class="badge ai" style="margin-left:.4rem;">from your resume</span>{% endif %}
+          </div>
+          <div class="prompt">{{ q.prompt }}</div>
+
+          {% if q.type == 'textarea' %}
+            <textarea name="{{ q.id }}" placeholder="Your answer (optional)…">{{ (answers or {}).get(q.id) or '' }}</textarea>
+          {% elif q.type == 'text' %}
+            <input type="text" name="{{ q.id }}" value="{{ (answers or {}).get(q.id) or '' }}" placeholder="Your answer (optional)…" />
+          {% elif q.type == 'choice' %}
+            <div class="seg">
+              {% for opt in q.options %}
+                <label><input type="radio" name="{{ q.id }}" value="{{ opt }}"
+                              {{ 'checked' if (answers or {}).get(q.id) == opt else '' }} /><span>{{ opt }}</span></label>
+              {% endfor %}
+            </div>
+          {% elif q.type == 'multichoice' %}
+            <div class="checks">
+              {% for opt in q.options %}
+                <label><input type="checkbox" name="{{ q.id }}" value="{{ opt }}"
+                              {{ 'checked' if opt in ((answers or {}).get(q.id) or []) else '' }} /><span>{{ opt }}</span></label>
+              {% endfor %}
+            </div>
+          {% elif q.type == 'salary' %}
+            {% set sal = (answers or {}).get(q.id) or {} %}
+            <div class="salary-row">
+              <div>
+                <label class="field-label">Minimum</label>
+                <input type="number" name="{{ q.id }}_min" min="0" step="1000"
+                       value="{{ sal.get('min') or '' }}" placeholder="e.g. 60000" />
+              </div>
+              <div>
+                <label class="field-label">Maximum</label>
+                <input type="number" name="{{ q.id }}_max" min="0" step="1000"
+                       value="{{ sal.get('max') or '' }}" placeholder="e.g. 90000" />
+              </div>
+              <div>
+                <label class="field-label">Per</label>
+                <select name="{{ q.id }}_interval">
+                  <option value="yearly" {{ 'selected' if sal.get('interval', 'yearly') == 'yearly' else '' }}>Year</option>
+                  <option value="hourly" {{ 'selected' if sal.get('interval') == 'hourly' else '' }}>Hour</option>
+                </select>
+              </div>
+            </div>
+          {% endif %}
+          {% if q.hint %}<div class="hint">{{ q.hint }}</div>{% endif %}
+        </div>
+      {% endfor %}
+
+      <div class="actions">
+        <button class="btn big" type="submit">Build my career plan →</button>
+        <button class="btn ghost" type="submit" name="skip" value="1"
+                formnovalidate>Skip — rank on my resume alone</button>
+      </div>
+      <div class="hint" style="margin-top:.6rem;">Every question is optional. Answers are stored
+        with this search so the future AI step can use them too.</div>
+    </form>
+  </div>
+{% endblock %}
