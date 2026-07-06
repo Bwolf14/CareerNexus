@@ -13,3 +13,4 @@ webapp/tests
 conftest.py
 requirements-dev.txt
 *.md
+ai_client/tests

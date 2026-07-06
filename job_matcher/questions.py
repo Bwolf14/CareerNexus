@@ -140,59 +140,81 @@ def _skills_question(parsed: dict[str, Any]) -> Optional[dict[str, Any]]:
     )
 
 
+def _salary_question() -> dict[str, Any]:
+    return _q(
+        "salary",
+        "What is your ideal, realistic pay range?",
+        "salary",
+        hint="Postings inside your range rank higher; ones below it are flagged.",
+    )
+
+
+def _work_style_question() -> dict[str, Any]:
+    return _q(
+        "work_style",
+        "How do you prefer to work?",
+        "choice",
+        options=WORK_STYLE_OPTIONS,
+    )
+
+
+def _priorities_question() -> dict[str, Any]:
+    return _q(
+        "priorities",
+        "What matters most to you in your next role?",
+        "multichoice",
+        options=PRIORITY_OPTIONS,
+        hint="Pick up to three.",
+    )
+
+
+def structured_questions(parsed: dict[str, Any]) -> list[dict[str, Any]]:
+    """The machine-usable preference questions, always asked.
+
+    Their ids (``preferred_skills``, ``salary``, ``work_style``,
+    ``priorities``) feed directly into :mod:`job_matcher.scoring`, so they are
+    appended to the questionnaire even when an AI generates the open-ended
+    part of the interview.
+    """
+    out: list[dict[str, Any]] = []
+    skills_q = _skills_question(parsed)
+    if skills_q:
+        out.append(skills_q)
+    out.extend([_salary_question(), _work_style_question(), _priorities_question()])
+    return out
+
+
 def build_questions(
     parsed: dict[str, Any],
     jobs: Optional[list[dict[str, Any]]] = None,
     max_questions: int = MAX_QUESTIONS,
 ) -> list[dict[str, Any]]:
-    """Build the 4–8 question list for a parsed resume.
+    """Build the 4–8 question list for a parsed resume (template path).
 
-    ``jobs`` is accepted (and currently unused) so the signature already
-    matches the future AI implementation, which will read the postings to ask
-    sharper questions.
+    ``jobs`` is accepted (and currently unused) so the signature matches the
+    AI implementation (:func:`ai_client.features.generate_questions`), which
+    reads the postings to ask sharper questions.
     """
     questions = _resume_questions(parsed)
 
-    standard = [
-        _q(
-            "five_year",
-            "Where do you see yourself in 5–10 years?",
-            hint="A rough direction is fine — deepen your craft, lead a team, "
-            "switch specialties, start something of your own…",
-        ),
-        _q(
-            "salary",
-            "What is your ideal, realistic pay range?",
-            "salary",
-            hint="Postings inside your range rank higher; ones below it are flagged.",
-        ),
-        _q(
-            "work_style",
-            "How do you prefer to work?",
-            "choice",
-            options=WORK_STYLE_OPTIONS,
-        ),
-        _q(
-            "priorities",
-            "What matters most to you in your next role?",
-            "multichoice",
-            options=PRIORITY_OPTIONS,
-            hint="Pick up to three.",
-        ),
-    ]
-
+    five_year = _q(
+        "five_year",
+        "Where do you see yourself in 5–10 years?",
+        hint="A rough direction is fine — deepen your craft, lead a team, "
+        "switch specialties, start something of your own…",
+    )
     skills_q = _skills_question(parsed)
 
     # Interleave: lead with the personal questions, keep the goal-setting
     # questions in a sensible conversational order, close with priorities.
     ordered: list[dict[str, Any]] = []
     ordered.extend(questions[:2])
-    ordered.append(standard[0])  # five_year
+    ordered.append(five_year)
     if skills_q:
         ordered.append(skills_q)
     ordered.extend(questions[2:])
-    ordered.append(standard[1])  # salary
-    ordered.append(standard[2])  # work_style
-    ordered.append(standard[3])  # priorities
+    ordered.append(_salary_question())
+    ordered.append(_work_style_question())
+    ordered.append(_priorities_question())
 
     return ordered[:max_questions]

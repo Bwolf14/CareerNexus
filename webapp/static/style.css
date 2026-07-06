@@ -264,6 +264,10 @@ tr:last-child td { border-bottom: none; }
 .whylist li.concern::before { content: "!"; color: var(--warn); }
 .whylist li.concern { color: var(--muted); }
 
+.ai-analysis { margin-top: .75rem; padding: .7rem .95rem; border-left: 3px solid var(--ai);
+               background: var(--ai-soft); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+               font-size: .89rem; line-height: 1.55; color: #e4dcfd; }
+
 /* --- Meters / stat bars -------------------------------------------------------------------------- */
 .meter { display: grid; grid-template-columns: minmax(150px, 1fr) 3fr auto; gap: .8rem;
          align-items: center; padding: .45rem 0; font-size: .88rem; }

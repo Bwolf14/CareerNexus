@@ -32,6 +32,7 @@ the container (``webapp.app:app``).
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -49,6 +50,16 @@ from flask import (
     url_for,
 )
 
+from ai_client import (
+    AIClientError,
+    generate_match_analysis,
+    generate_questions,
+    load_settings,
+    normalize_base_url,
+    save_settings,
+    test_connection,
+)
+from ai_client.settings import is_configured, settings_path
 from job_matcher import (
     analyze_certifications,
     build_questions,
@@ -66,7 +77,7 @@ from job_scraper.scraper import COUNTRY_INDEED
 from resume_parser import parse_resume
 from resume_parser.exceptions import ResumeParserError
 
-from . import db, plan_store
+from . import ai_store, db, plan_store
 
 # Search-form option whitelists (anything else falls back to the default).
 WORK_TYPES = {"any", "remote", "local"}
@@ -396,6 +407,7 @@ def matches(search_id: int):
         search_id=search_id,
         db_error=None,
         contact_name=search_row.get("username"),
+        ai_on=is_configured(load_settings()),
         **_step_urls(resume_id=search_row.get("resume_id"), search_id=search_id),
     )
 
@@ -403,14 +415,68 @@ def matches(search_id: int):
 # ---------------------------------------------------------------------------
 # Step 4 — follow-up questionnaire
 # ---------------------------------------------------------------------------
+def _questionnaire_for(
+    search_id: int, parsed: dict, jobs: list, *, regenerate: bool = False
+) -> tuple[list[dict], dict]:
+    """The question list for a search, plus an ``ai_status`` dict for the UI.
+
+    The rendered list is cached per search (see :mod:`webapp.ai_store`) so the
+    answering POST maps onto exactly the questions the user saw — essential
+    when the AI wrote them, since generation isn't reproducible. Falls back to
+    the deterministic template questions whenever the AI is unconfigured or
+    fails.
+    """
+    ai_settings = load_settings()
+    ai_status = {
+        "configured": is_configured(ai_settings),
+        "model": ai_settings.get("model"),
+        "generator": "template",
+        "error": None,
+    }
+
+    if not regenerate:
+        cached = ai_store.load("questions", search_id)
+        if cached and cached.get("questions"):
+            ai_status["generator"] = cached.get("generator", "template")
+            if cached.get("model"):
+                ai_status["model"] = cached["model"]
+            return cached["questions"], ai_status
+
+    question_list = None
+    if ai_status["configured"]:
+        try:
+            question_list = generate_questions(ai_settings, parsed, jobs)
+            ai_status["generator"] = "ai"
+        except AIClientError as exc:
+            ai_status["error"] = str(exc)
+    if question_list is None:
+        question_list = build_questions(parsed, jobs)
+
+    try:
+        ai_store.save(
+            "questions",
+            search_id,
+            {
+                "generator": ai_status["generator"],
+                "model": ai_settings.get("model")
+                if ai_status["generator"] == "ai"
+                else None,
+                "questions": question_list,
+            },
+        )
+    except Exception:
+        pass  # cache is best-effort; template fallback keeps POST consistent
+    return question_list, ai_status
+
+
 @app.route("/questions/<int:search_id>", methods=["GET", "POST"])
 def questions(search_id: int):
     search_row = _load_search_or_404(search_id)
     parsed, _ = _resume_for_search(search_row)
     jobs = db.get_jobs_for_search(search_id)
-    question_list = build_questions(parsed, jobs)
 
     if request.method == "POST":
+        question_list, _ = _questionnaire_for(search_id, parsed, jobs)
         if not request.form.get("skip"):
             answers = _collect_answers(question_list, request.form)
             warning = plan_store.save_answers(
@@ -420,6 +486,10 @@ def questions(search_id: int):
                 flash(warning, "warn")
         return redirect(url_for("recommendations", search_id=search_id))
 
+    regenerate = request.args.get("regen") == "1"
+    question_list, ai_status = _questionnaire_for(
+        search_id, parsed, jobs, regenerate=regenerate
+    )
     return render_template(
         "questions.html",
         step=4,
@@ -427,6 +497,7 @@ def questions(search_id: int):
         job_count=len(jobs),
         questions=question_list,
         answers=plan_store.load_answers(search_id),
+        ai_status=ai_status,
         **_step_urls(resume_id=search_row.get("resume_id"), search_id=search_id),
     )
 
@@ -471,6 +542,73 @@ def _format_answer(question: dict, answer) -> str:
     return str(answer)
 
 
+def _attach_ai_analysis(
+    search_id: int, parsed: dict, picks: list[dict], answers: dict | None
+) -> tuple[str | None, dict]:
+    """Fill ``pick["ai_analysis"]`` on each pick; return (overall, ai_status).
+
+    Results are cached per search, keyed by a hash of the answers and the
+    shortlist, so revisits are instant but a changed questionnaire or a
+    re-ranked list triggers a fresh generation.
+    """
+    ai_settings = load_settings()
+    ai_status = {
+        "configured": is_configured(ai_settings),
+        "model": ai_settings.get("model"),
+        "used": False,
+        "error": None,
+    }
+    if not ai_status["configured"] or not picks:
+        return None, ai_status
+
+    basis = json.dumps(
+        {
+            "answers": answers or {},
+            "picks": [
+                [(p.get("job") or {}).get("source_site"),
+                 (p.get("job") or {}).get("external_id")]
+                for p in picks
+            ],
+            "model": ai_settings.get("model"),
+        },
+        sort_keys=True,
+        default=str,
+    )
+    cache_key = hashlib.sha1(basis.encode("utf-8")).hexdigest()
+
+    analysis = None
+    if request.args.get("regen") != "1":
+        cached = ai_store.load("analysis", search_id)
+        if cached and cached.get("key") == cache_key:
+            analysis = cached
+
+    if analysis is None:
+        try:
+            result = generate_match_analysis(ai_settings, parsed, picks, answers)
+            analysis = {
+                "key": cache_key,
+                "model": ai_settings.get("model"),
+                "overall": result["overall"],
+                # JSON object keys are strings; store them that way from the start.
+                "per_index": {str(i): text for i, text in result["per_index"].items()},
+            }
+            try:
+                ai_store.save("analysis", search_id, analysis)
+            except Exception:
+                pass
+        except AIClientError as exc:
+            ai_status["error"] = str(exc)
+            return None, ai_status
+
+    ai_status["used"] = True
+    if analysis.get("model"):
+        ai_status["model"] = analysis["model"]
+    per_index = analysis.get("per_index") or {}
+    for i, pick in enumerate(picks):
+        pick["ai_analysis"] = per_index.get(str(i))
+    return analysis.get("overall"), ai_status
+
+
 @app.route("/recommendations/<int:search_id>")
 def recommendations(search_id: int):
     search_row = _load_search_or_404(search_id)
@@ -484,9 +622,15 @@ def recommendations(search_id: int):
     certs = analyze_certifications(parsed, jobs)
     tips = build_resume_tips(parsed, cert_analysis=certs) if parsed else []
 
+    overall_analysis, ai_status = _attach_ai_analysis(search_id, parsed, picks, answers)
+
     answers_display = []
     if answers:
-        for q in build_questions(parsed, jobs):
+        # Use the questionnaire the user actually answered (it may have been
+        # AI-generated), falling back to the deterministic template list.
+        cached_q = ai_store.load("questions", search_id)
+        question_list = (cached_q or {}).get("questions") or build_questions(parsed, jobs)
+        for q in question_list:
             if q["id"] in answers:
                 answers_display.append(
                     {"prompt": q["prompt"], "answer": _format_answer(q, answers[q["id"]])}
@@ -505,8 +649,61 @@ def recommendations(search_id: int):
         answered=answered,
         answers_display=answers_display,
         notes=notes,
+        ai_status=ai_status,
+        overall_analysis=overall_analysis,
         **_step_urls(resume_id=search_row.get("resume_id"), search_id=search_id),
     )
+
+
+# ---------------------------------------------------------------------------
+# AI settings (Ollama / any OpenAI-compatible server)
+# ---------------------------------------------------------------------------
+@app.route("/settings", methods=["GET", "POST"])
+def settings_page():
+    if request.method == "POST":
+        submitted = {
+            "enabled": bool(request.form.get("enabled")),
+            "base_url": (request.form.get("base_url") or "").strip(),
+            "model": (request.form.get("model") or "").strip(),
+            "connect_timeout": request.form.get("connect_timeout") or 4,
+            "read_timeout": request.form.get("read_timeout") or 180,
+        }
+        error = None
+        if submitted["enabled"] and not normalize_base_url(submitted["base_url"]):
+            error = "Enter the AI server address before enabling AI features."
+        elif submitted["enabled"] and not submitted["model"]:
+            error = (
+                "Pick a model before enabling AI features — use “Test connection” "
+                "to list what the server has installed."
+            )
+        if error:
+            flash(error, "error")
+            current = {**load_settings(), **submitted}
+            return render_template(
+                "settings.html", s=current, settings_file=settings_path()
+            ), 400
+
+        save_settings(submitted)
+        flash("AI settings saved.", "info")
+        return redirect(url_for("settings_page"))
+
+    return render_template(
+        "settings.html", s=load_settings(), settings_file=settings_path()
+    )
+
+
+@app.route("/api/ai/test", methods=["POST"])
+def api_ai_test():
+    """Probe an AI server (address from the request body, not saved settings).
+
+    Powers the settings page's Test button, so users can verify a URL before
+    saving it. Returns ``{ok, latency_ms, models, error, normalized_url}``.
+    """
+    data = request.get_json(silent=True) or {}
+    base = normalize_base_url(data.get("base_url") or "")
+    result = test_connection({"base_url": base, "connect_timeout": 4.0})
+    result["normalized_url"] = base
+    return jsonify(result)
 
 
 # ---------------------------------------------------------------------------

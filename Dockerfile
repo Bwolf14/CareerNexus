@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements-web.txt
 COPY resume_parser ./resume_parser
 COPY job_scraper ./job_scraper
 COPY job_matcher ./job_matcher
+COPY ai_client ./ai_client
 COPY webapp ./webapp
 
 EXPOSE 8000

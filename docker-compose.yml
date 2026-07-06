@@ -37,6 +37,17 @@ services:
       # so Canadian locations need this set or they return nothing.
       JOB_COUNTRY: Canada
       JOB_RESULTS_DIR: /app/job_results
+      # Optional AI server (Ollama / any OpenAI-compatible endpoint). These are
+      # only the boot-time defaults — the /settings page in the UI can set and
+      # test the connection, and its saved values take precedence. See
+      # docs/OLLAMA_SETUP.md for the full Windows + Ollama walkthrough.
+      AI_ENABLED: "0"
+      AI_BASE_URL: ""     # e.g. http://192.168.1.50:11434 (the GPU PC)
+      AI_MODEL: ""        # e.g. qwen3:32b
+    extra_hosts:
+      # Lets the container reach an Ollama instance running on THIS host (not
+      # needed when the model lives on another machine, e.g. the Windows PC).
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     volumes:
