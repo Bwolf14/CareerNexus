@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Career Nexus{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,{{ '<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%2338bdf8%22/><text x=%2250%22 y=%2268%22 font-size=%2252%22 text-anchor=%22middle%22 font-family=%22system-ui%22 font-weight=%22800%22 fill=%22%2304293a%22>CN</text></svg>' }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="topnav">
+      <a class="brand" href="/">
+        <span class="logo">CN</span>
+        Career Nexus
+        <span class="tag">demo</span>
+      </a>
+      <div class="links">
+        <a href="/">New session</a>
+        <a href="/#history">History</a>
+      </div>
+    </nav>
+
+    {% if step %}
+    {% set steps = [(1, 'Upload', None),
+                    (2, 'Your profile', profile_url),
+                    (3, 'Job matches', matches_url),
+                    (4, 'Follow-up questions', questions_url),
+                    (5, 'Your career plan', plan_url)] %}
+    <ol class="stepper">
+      {% for n, label, url in steps %}
+        <li class="{{ 'active' if n == step else 'done' if n < step else '' }}">
+          {% if url and n != step %}
+            <a href="{{ url }}"><span class="n">{{ '✓' if n < step else n }}</span> {{ label }}</a>
+          {% else %}
+            <span class="n">{{ '✓' if n < step else n }}</span> {{ label }}
+          {% endif %}
+        </li>
+        {% if not loop.last %}<li class="sep">→</li>{% endif %}
+      {% endfor %}
+    </ol>
+    {% endif %}
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="banner {{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+
+    <footer class="footer">
+      <span>Career Nexus — resume-driven job matching.</span>
+      <span>Live postings via JobSpy · AI profiling &amp; matching <span class="badge ai">coming soon</span></span>
+    </footer>
+  </div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

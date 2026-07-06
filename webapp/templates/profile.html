@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+{% block title %}Your profile — Career Nexus{% endblock %}
+
+{% block content %}
+  <h1>Your profile</h1>
+  <p class="sub">This is what we extracted from
+    {% if filename %}<strong>{{ filename }}</strong>{% else %}your resume{% endif %}.
+    If it looks right, set your search preferences below and find matching jobs.</p>
+
+  {% if db_error %}
+    <div class="banner warn"><strong>Database note:</strong> {{ db_error }}
+      {% if not resume_id %} Parsing worked, but this profile isn't stored — the job-search
+      step needs the database, so it's disabled for now.{% endif %}</div>
+  {% endif %}
+
+  {% set contact = parsed.get('contact_info') or {} %}
+  {% set metadata = parsed.get('metadata') or {} %}
+  {% set links = contact.get('links') or {} %}
+
+  <div class="card">
+    <div class="profile-head">
+      <div class="who">
+        <h2>{{ contact.get('name') or 'Name not detected' }}</h2>
+        <div class="contact">
+          {{ contact.get('email') or 'no email found' }}
+          {% if contact.get('phone') %} · {{ contact.phone }}{% endif %}
+          {% if contact.get('location') %} · 📍 {{ contact.location }}{% endif %}
+        </div>
+        <div style="margin-top:.45rem;">
+          {% if links.get('linkedin') %}<span class="badge">in LinkedIn</span>{% endif %}
+          {% if links.get('github') %}<span class="badge">GitHub</span>{% endif %}
+          {% if links.get('portfolio') %}<span class="badge">Portfolio</span>{% endif %}
+          {% set status = metadata.get('section_detection_status', 'unknown') %}
+          <span class="badge" style="{{ 'color:var(--ok);border-color:rgba(52,211,153,.4)' if status == 'success'
+                                        else 'color:var(--warn);border-color:rgba(251,191,36,.4)' if status == 'partial'
+                                        else 'color:var(--danger);border-color:rgba(248,113,113,.4)' }}">
+            parse: {{ status }}</span>
+        </div>
+      </div>
+      {% set conf = ((metadata.get('extraction_confidence') or 0) * 100) | round | int %}
+      <div class="confidence">
+        <div class="lbl">EXTRACTION CONFIDENCE</div>
+        <div class="scorebox"><span class="num">{{ conf }}%</span></div>
+        <div class="scorebar" style="width:120px;"><i style="width:{{ conf }}%;"></i></div>
+      </div>
+    </div>
+
+    {% if metadata.get('warnings') %}
+      <div class="banner warn">
+        <strong>Parser notes</strong> — worth a quick check before searching:
+        <ul>{% for w in metadata['warnings'] %}<li>{{ w }}</li>{% endfor %}</ul>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="grid2" style="margin-top:1.4rem;">
+    <div class="stack">
+      <div class="card">
+        <h2>Experience</h2>
+        {% if parsed.get('experience') %}
+          <ul class="timeline">
+            {% for exp in parsed.experience %}
+              <li>
+                {% set d = exp.get('dates') or {} %}
+                <div class="when">
+                  {{ d.get('start_date') or '?' }} — {{ 'Present' if d.get('is_current') else (d.get('end_date') or '?') }}
+                </div>
+                <h3>{{ exp.get('title') or 'Role not detected' }}</h3>
+                <div class="org">{{ exp.get('company') or 'Company not detected' }}
+                  {% if exp.get('location') %} · {{ exp.location }}{% endif %}</div>
+                {% if exp.get('description') %}
+                  <ul>{% for b in exp.description[:4] %}<li>{{ b }}</li>{% endfor %}</ul>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="empty">No work experience detected.</p>
+        {% endif %}
+      </div>
+
+      <div class="card">
+        <h2>Education</h2>
+        {% if parsed.get('education') %}
+          <ul class="timeline">
+            {% for edu in parsed.education %}
+              <li>
+                {% set d = edu.get('dates') or {} %}
+                <div class="when">
+                  {{ d.get('start_date') or '?' }} — {{ 'Present' if d.get('is_current') else (d.get('end_date') or '?') }}
+                </div>
+                <h3>{{ edu.get('degree') or 'Program' }}{% if edu.get('field_of_study') %} — {{ edu.field_of_study }}{% endif %}</h3>
+                <div class="org">{{ edu.get('institution') or '' }}{% if edu.get('gpa') %} · GPA {{ edu.gpa }}{% endif %}</div>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="empty">No education detected.</p>
+        {% endif %}
+      </div>
+
+      {% if parsed.get('projects') %}
+      <div class="card">
+        <h2>Projects</h2>
+        {% for p in parsed.projects %}
+          <div style="margin-bottom:.8rem;">
+            <h3>{{ p.title }}</h3>
+            {% if p.get('description') %}<p class="sub" style="font-size:.88rem; margin:0;">{{ p.description }}</p>{% endif %}
+            {% if p.get('technologies') %}
+              <div>{% for t in p.technologies %}<span class="badge">{{ t }}</span>{% endfor %}</div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="stack">
+      {% if parsed.get('summary') %}
+      <div class="card">
+        <h2>Summary</h2>
+        <p class="sub" style="font-size:.9rem; margin:0;">{{ parsed.summary }}</p>
+      </div>
+      {% endif %}
+
+      <div class="card">
+        <h2>Skills</h2>
+        {% set skills = (parsed.get('skills') or {}).get('raw') or [] %}
+        {% if skills %}
+          <div>{% for s in skills %}<span class="chip">{{ s }}</span>{% endfor %}</div>
+        {% else %}
+          <p class="empty">No skills section detected.</p>
+        {% endif %}
+      </div>
+
+      <div class="card">
+        <h2>Certifications</h2>
+        {% if parsed.get('certifications') %}
+          {% for c in parsed.certifications %}
+            <div style="margin-bottom:.55rem;">
+              <strong style="font-size:.92rem;">{{ c.name }}</strong>
+              <div class="jobmeta">{{ c.get('issuer') or '' }}
+                {% if c.get('date_earned') %} · earned {{ c.date_earned }}{% endif %}</div>
+            </div>
+          {% endfor %}
+        {% else %}
+          <p class="empty">None listed — the career-plan step will tell you which ones
+             your target jobs ask for.</p>
+        {% endif %}
+      </div>
+
+      {% if parsed.get('additional_sections') %}
+      <div class="card">
+        <h2>Also on your resume</h2>
+        {% for heading, lines in parsed.additional_sections.items() %}
+          <h3 style="color:var(--muted); font-size:.85rem;">{{ heading }}</h3>
+          <p class="sub" style="font-size:.85rem;">{{ lines | join(' · ') }}</p>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Find matching jobs</h2>
+    {% if resume_id %}
+    <p class="sub" style="font-size:.9rem;">We'll search live job boards using your job titles and top
+       skills as search terms. Tune the search below — everything is optional.</p>
+    <form id="search-form" action="/profile/{{ resume_id }}/search" method="post">
+      <div class="formgrid">
+        <div class="row2">
+          <div>
+            <label class="field-label" for="keywords">Extra keywords <span class="opt">(optional, comma-separated)</span></label>
+            <input type="text" id="keywords" name="keywords" placeholder="e.g. cloud, help desk, cybersecurity" />
+            <div class="hint">Searched in addition to the titles from your resume.</div>
+          </div>
+          <div>
+            <label class="field-label" for="location">Location <span class="opt">(optional)</span></label>
+            <input type="text" id="location" name="location" list="location-presets"
+                   value="{{ contact.get('location') or '' }}" placeholder="City, province/state, or country" />
+            <datalist id="location-presets">
+              <option value="Calgary, AB"></option>
+              <option value="Edmonton, AB"></option>
+              <option value="Toronto, ON"></option>
+              <option value="Vancouver, BC"></option>
+              <option value="Canada"></option>
+              <option value="Remote"></option>
+              <option value="United States"></option>
+            </datalist>
+          </div>
+        </div>
+
+        <div class="row2">
+          <div>
+            <label class="field-label">Work type</label>
+            <div class="seg">
+              <label><input type="radio" name="work_type" value="any" checked /><span>Any</span></label>
+              <label><input type="radio" name="work_type" value="remote" /><span>Remote only</span></label>
+              <label><input type="radio" name="work_type" value="local" /><span>On-site / local</span></label>
+            </div>
+          </div>
+          <div>
+            <label class="field-label" for="country">Job board region</label>
+            <select id="country" name="country">
+              <option value="Canada" {{ 'selected' if default_country == 'Canada' else '' }}>🇨🇦 Canada</option>
+              <option value="USA" {{ 'selected' if default_country == 'USA' else '' }}>🇺🇸 United States</option>
+            </select>
+          </div>
+        </div>
+
+        <details class="advanced">
+          <summary>Job boards to search</summary>
+          <div class="inner">
+            <div class="checks">
+              {% for site in site_choices %}
+                <label><input type="checkbox" name="sites" value="{{ site.key }}"
+                              {{ 'checked' if site.key in default_sites else '' }} />
+                       <span>{{ site.label }}</span></label>
+              {% endfor %}
+            </div>
+            <div class="hint">LinkedIn rate-limits aggressively without rotating proxies — if a board
+                returns nothing, its error shows up as a note on the results page.</div>
+          </div>
+        </details>
+      </div>
+
+      <div class="actions">
+        <button class="btn big" id="search-submit" type="submit">Search job boards →</button>
+        <a class="btn ghost" href="/download/{{ resume_id }}">Download resume JSON</a>
+        <span class="spinner" id="spinner">Scraping live job boards — this can take 10–60 seconds…</span>
+      </div>
+    </form>
+    {% else %}
+      <div class="banner error">The parsed profile couldn't be stored, so a job search can't be
+        linked to it. Fix the database connection and re-upload.</div>
+    {% endif %}
+  </div>
+
+  <details class="rawjson card" style="box-shadow:none;">
+    <summary>Raw parsed JSON</summary>
+    <pre class="json">{{ pretty_json }}</pre>
+  </details>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const form = document.getElementById('search-form');
+  if (form) {
+    form.addEventListener('submit', () => {
+      document.getElementById('search-submit').disabled = true;
+      document.getElementById('spinner').style.display = 'inline-block';
+    });
+  }
+</script>
+{% endblock %}

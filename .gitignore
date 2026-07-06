@@ -6,3 +6,7 @@ venv/
 
 # Job scraper JSON output (generated at runtime; feed to the AI matcher)
 job_results/
+
+# Synthesized test resumes (regenerate with `python -m resume_parser.tests.generate_samples`)
+resume_parser/tests/sample_resumes/*.pdf
+resume_parser/tests/sample_resumes/*.docx

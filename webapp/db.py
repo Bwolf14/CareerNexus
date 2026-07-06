@@ -341,6 +341,56 @@ def save_job_search(
         conn.close()
 
 
+def save_plan_answers(
+    search_id: int, resume_id: Optional[int], answers: dict[str, Any]
+) -> None:
+    """Store (or overwrite) the questionnaire answers for a job search.
+
+    Raises on any DB problem — including the ``career_plans`` table not
+    existing yet on databases initialised before it was added to ``init.sql``.
+    Callers treat this as best-effort and fall back to the file store.
+    """
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO career_plans (search_id, resume_id, answers)
+                VALUES (%s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    answers = VALUES(answers),
+                    resume_id = VALUES(resume_id)
+                """,
+                (search_id, resume_id, json.dumps(answers)),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_plan_answers(search_id: int) -> Optional[dict[str, Any]]:
+    """Fetch stored questionnaire answers for a search, or None."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT answers FROM career_plans WHERE search_id = %s", (search_id,)
+            )
+            row = cur.fetchone()
+            if not row or row["answers"] is None:
+                return None
+            data = row["answers"]
+            if isinstance(data, (str, bytes, bytearray)):
+                return json.loads(data)
+            return data
+    finally:
+        conn.close()
+
+
 def list_job_searches(limit: int = 100) -> list[dict[str, Any]]:
     """Recent scrape runs (with the uploader's name) for the jobs index page."""
     conn = get_connection()
@@ -368,7 +418,13 @@ def get_job_search(search_id: int) -> Optional[dict[str, Any]]:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM job_searches WHERE id = %s", (search_id,)
+                """
+                SELECT s.*, u.username
+                FROM job_searches s
+                LEFT JOIN users u ON u.id = s.user_id
+                WHERE s.id = %s
+                """,
+                (search_id,),
             )
             return cur.fetchone()
     finally:
