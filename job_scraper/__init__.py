@@ -23,11 +23,18 @@ from __future__ import annotations
 
 from .output import write_results_json
 from .queries import build_queries_from_resume
-from .scraper import DEFAULT_SITES, scrape_jobs_for_queries
+from .scraper import (
+    DEFAULT_SITES,
+    dedupe_cross_board,
+    posting_dedup_key,
+    scrape_jobs_for_queries,
+)
 
 __all__ = [
     "build_queries_from_resume",
     "scrape_jobs_for_queries",
     "write_results_json",
+    "dedupe_cross_board",
+    "posting_dedup_key",
     "DEFAULT_SITES",
 ]

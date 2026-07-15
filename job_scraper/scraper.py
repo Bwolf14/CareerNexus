@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import re
 from typing import Any, Optional
 
 # Boards to scrape. Indeed, ZipRecruiter, and Glassdoor all work without proxies
@@ -155,6 +156,64 @@ def _dedup(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen.add(key)
         out.append(job)
     return out
+
+
+_DEDUP_PUNCT = re.compile(r"[^a-z0-9 ]+")
+_DEDUP_WS = re.compile(r"\s+")
+
+
+def _norm_for_key(value: Optional[str]) -> str:
+    text = _DEDUP_PUNCT.sub(" ", (value or "").lower())
+    return _DEDUP_WS.sub(" ", text).strip()
+
+
+def posting_dedup_key(
+    title: Optional[str], company: Optional[str], location: Optional[str]
+) -> str:
+    """Stable content hash for a posting, independent of which board it came from.
+
+    Same title + company + city → same key, so a job cross-posted to Indeed and
+    Glassdoor collapses to one entry. Location is reduced to its first token
+    (usually the city) so "Calgary, AB" and "Calgary, Alberta" still match.
+    """
+    city = _norm_for_key(location).split(",")[0].split(" ")[0]
+    basis = f"{_norm_for_key(title)}|{_norm_for_key(company)}|{city}"
+    return hashlib.sha1(basis.encode("utf-8")).hexdigest()
+
+
+def dedupe_cross_board(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse the same posting appearing on multiple boards into one row.
+
+    Keeps the first occurrence (optionally upgrading to one that has a URL) and
+    annotates it with ``also_on`` — the other boards it was found on — so the UI
+    can show "also on Glassdoor" without listing the posting twice.
+    """
+    by_key: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for job in jobs:
+        key = posting_dedup_key(
+            job.get("title"), job.get("company"), job.get("location")
+        )
+        if key not in by_key:
+            job = dict(job)
+            job["dedup_key"] = key
+            job["also_on"] = []
+            by_key[key] = job
+            order.append(key)
+            continue
+        kept = by_key[key]
+        site = job.get("source_site")
+        if site and site != kept.get("source_site") and site not in kept["also_on"]:
+            kept["also_on"].append(site)
+        # Prefer a version that actually has a link if the kept one doesn't.
+        if not kept.get("job_url") and job.get("job_url"):
+            also = kept["also_on"]
+            src = kept.get("source_site")
+            job = dict(job)
+            job["dedup_key"] = key
+            job["also_on"] = also + ([src] if src and src not in also else [])
+            by_key[key] = job
+    return [by_key[k] for k in order]
 
 
 def _sample_jobs(queries: list[dict[str, Any]]) -> list[dict[str, Any]]:

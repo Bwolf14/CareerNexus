@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
+from .scoring import _matched_skills, _tokens
+
 _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
@@ -179,3 +181,86 @@ def build_resume_tips(
 
     tips.sort(key=lambda t: _SEVERITY_ORDER.get(t["severity"], 3))
     return tips
+
+
+# Common words in job postings that aren't worth suggesting as resume keywords.
+_TAILOR_STOP = {
+    "experience", "work", "team", "role", "job", "company", "position", "years",
+    "ability", "strong", "excellent", "must", "will", "required", "preferred",
+    "responsibilities", "requirements", "including", "etc", "www", "http",
+    "https", "com", "you", "your", "our", "we", "the", "and", "for", "with",
+    "candidate", "candidates", "opportunity", "please", "apply", "benefits",
+    "environment", "skills", "knowledge", "working", "based", "per", "day",
+    "week", "year", "full", "time", "part", "new", "join", "looking",
+}
+
+
+def tailor_for_job(parsed: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic per-posting resume-tailoring advice.
+
+    Returns ``{"generator", "summary", "emphasize", "add", "bullets"}`` — the
+    same shape the AI tailoring produces, so the template renders either. It
+    highlights which of the candidate's skills this posting explicitly asks for
+    (lead with those), surfaces role keywords from the posting title the resume
+    doesn't echo, and gives concrete, non-fabricating rewrite suggestions.
+    """
+    skills = [
+        s for s in (parsed.get("skills") or {}).get("raw") or [] if s and len(s) <= 40
+    ]
+    title = (job.get("title") or "").strip()
+    company = (job.get("company") or "").strip()
+    job_text = f"{title} {job.get('description') or ''}".lower()
+
+    emphasize = _matched_skills(skills, job_text)[:8]
+
+    resume_title_tokens: set[str] = set()
+    for exp in parsed.get("experience") or []:
+        resume_title_tokens |= _tokens(exp.get("title"))
+    resume_vocab = resume_title_tokens | {s.lower() for s in skills}
+
+    # Role keywords from the posting title the resume doesn't already echo.
+    add = [
+        tok
+        for tok in _tokens(title)
+        if tok not in resume_vocab and tok not in _TAILOR_STOP and len(tok) > 2
+    ][:6]
+
+    bullets: list[str] = []
+    if emphasize:
+        bullets.append(
+            "Lead with " + ", ".join(emphasize[:4]) + " — this posting names "
+            "them explicitly, so put them near the top of your resume and summary."
+        )
+    else:
+        bullets.append(
+            "None of your listed skills appear verbatim in this posting. Re-read "
+            "it and mirror its exact wording for any tools/skills you do have."
+        )
+    if title:
+        bullets.append(
+            f"Echo the role's language: work the phrasing of “{title}” into your "
+            "summary or the relevant job title if it honestly fits your experience."
+        )
+    if add:
+        bullets.append(
+            "The posting emphasises " + ", ".join(add)
+            + " — if you have that experience, make it explicit; if not, it's a "
+            "gap worth noting."
+        )
+    bullets.append(
+        "Quantify the achievements most relevant to this role (numbers, scale, "
+        "impact) so they stand out to both screeners and hiring managers."
+    )
+
+    summary = (
+        f"Tailoring notes for {title or 'this role'}"
+        + (f" at {company}" if company else "")
+        + "."
+    )
+    return {
+        "generator": "template",
+        "summary": summary,
+        "emphasize": emphasize,
+        "add": add,
+        "bullets": bullets,
+    }

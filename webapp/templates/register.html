@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Create an account — Career Nexus{% endblock %}
+
+{% block content %}
+  <div class="authwrap">
+    <div class="card">
+      <h1>Create your account</h1>
+      <p class="sub">You'll need an account to upload resumes and search for jobs.</p>
+
+      <form method="post" action="{{ url_for('register') }}">
+        <div class="formgrid">
+          <div>
+            <label class="field-label" for="email">Email</label>
+            <input type="email" id="email" name="email" value="{{ email or '' }}"
+                   autocomplete="email" required autofocus />
+          </div>
+          <div>
+            <label class="field-label" for="password">Password
+              <span class="opt">· at least 8 characters</span></label>
+            <input type="password" id="password" name="password"
+                   autocomplete="new-password" minlength="8" required />
+          </div>
+          <div>
+            <label class="field-label" for="confirm">Confirm password</label>
+            <input type="password" id="confirm" name="confirm"
+                   autocomplete="new-password" minlength="8" required />
+          </div>
+
+          <label class="consent">
+            <input type="checkbox" name="consent" value="1"
+                   {{ 'checked' if consent else '' }} required />
+            <span class="text">
+              <strong>I consent to the collection of my data.</strong>
+              I understand that my resume and the personal details it contains
+              (including sensitive information) will be stored and used to search
+              job boards and build my matches. This consent is required to create
+              an account.
+            </span>
+          </label>
+        </div>
+
+        <div class="actions">
+          <button class="btn big" type="submit">Create account →</button>
+        </div>
+      </form>
+
+      <p class="authswap">Already have an account? <a href="{{ url_for('login') }}">Log in</a></p>
+    </div>
+  </div>
+{% endblock %}

@@ -187,8 +187,6 @@
   <div class="card">
     <h2>Take it with you</h2>
     <div class="actions" style="margin-top:.4rem;">
-      {% if search_id %}<a class="btn" href="/jobs/download/{{ search_id }}">Download jobs JSON</a>{% endif %}
-      {% if resume_id %}<a class="btn secondary" href="/download/{{ resume_id }}">Download resume JSON</a>{% endif %}
       {% if search_id %}<a class="btn secondary" href="/matches/{{ search_id }}">See all {{ total_jobs }} postings</a>{% endif %}
       <a class="btn ghost" href="/">Start a new session</a>
     </div>

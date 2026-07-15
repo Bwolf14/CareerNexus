@@ -20,12 +20,13 @@ from __future__ import annotations
 
 from .certifications import analyze_certifications
 from .questions import build_questions
-from .resume_tips import build_resume_tips
+from .resume_tips import build_resume_tips, tailor_for_job
 from .scoring import score_jobs
 
 __all__ = [
     "analyze_certifications",
     "build_questions",
     "build_resume_tips",
+    "tailor_for_job",
     "score_jobs",
 ]

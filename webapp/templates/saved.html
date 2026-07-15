@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Saved jobs — Career Nexus{% endblock %}
+
+{% set labels = {'interested':'Interested','applied':'Applied','interviewing':'Interviewing','offer':'Offer','rejected':'Rejected'} %}
+
+{% block content %}
+  <h1>Application tracker</h1>
+  <p class="sub">Jobs you saved from your searches, organised by where they are in your
+     application process. Update the status or jot notes as you go.</p>
+
+  {% if db_error %}
+    <div class="banner error">Could not reach the database: {{ db_error }}</div>
+  {% elif total == 0 %}
+    <div class="card">
+      <p class="empty">You haven't saved any jobs yet. Run a search and hit
+        <strong>Save</strong> on any posting to start tracking it here.</p>
+      <div class="actions"><a class="btn" href="/">Start a search</a></div>
+    </div>
+  {% else %}
+    <div class="board">
+      {% for status, jobs in columns %}
+        <div class="board-col">
+          <h3 class="board-head">{{ labels[status] }} <span class="cnt">{{ jobs | length }}</span></h3>
+          {% for j in jobs %}
+            <div class="board-card">
+              <div class="board-card-title">
+                {% if j.job_url %}<a href="{{ j.job_url }}" target="_blank" rel="noopener">{{ j.title or 'Untitled posting' }}</a>
+                {% else %}{{ j.title or 'Untitled posting' }}{% endif %}
+              </div>
+              <div class="company">{{ j.company or 'Unknown company' }}</div>
+              {% if j.location %}<div class="jobmeta">{{ j.location }}</div>{% endif %}
+              <div style="margin:.35rem 0;">
+                {% if j.salary_display %}<span class="badge salary">{{ j.salary_display }}</span>{% endif %}
+                {% if j.is_remote %}<span class="badge remote">Remote</span>{% endif %}
+                {% if j.source_site %}<span class="badge">{{ j.source_site }}</span>{% endif %}
+              </div>
+
+              <form method="post" action="{{ url_for('saved_update', saved_id=j.id) }}" class="board-form">
+                <select name="status" onchange="this.form.submit()">
+                  {% for s in statuses %}
+                    <option value="{{ s }}" {{ 'selected' if s == j.status else '' }}>{{ labels[s] }}</option>
+                  {% endfor %}
+                </select>
+                <textarea name="notes" rows="2" placeholder="Notes…"
+                          onblur="this.form.submit()">{{ j.notes or '' }}</textarea>
+              </form>
+
+              <form method="post" action="{{ url_for('saved_delete', saved_id=j.id) }}"
+                    onsubmit="return confirm('Remove this job from your tracker?');">
+                <button class="logout-btn" type="submit" style="color:var(--danger);font-size:.8rem;">Remove</button>
+              </form>
+            </div>
+          {% else %}
+            <p class="empty" style="font-size:.85rem;">—</p>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endblock %}

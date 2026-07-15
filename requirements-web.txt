@@ -8,3 +8,9 @@ python-jobspy>=1.1
 
 # AI (Ollama) client
 requests>=2.31
+
+# OCR fallback for scanned/image PDFs (needs the tesseract-ocr system binary,
+# installed in the Docker image). Optional at runtime: if unavailable, the
+# parser degrades to its pre-OCR behaviour.
+pytesseract>=0.3.10
+Pillow>=10.0

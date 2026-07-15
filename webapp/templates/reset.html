@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Set a new password — Career Nexus{% endblock %}
+
+{% block content %}
+  <div class="authwrap">
+    <div class="card">
+      <h1>Set a new password</h1>
+      <p class="sub">Choose a new password for your account.</p>
+
+      <form method="post" action="{{ url_for('reset_password', token=token) }}">
+        <div class="formgrid">
+          <div>
+            <label class="field-label" for="password">New password
+              <span class="opt">· at least 8 characters</span></label>
+            <input type="password" id="password" name="password"
+                   autocomplete="new-password" minlength="8" required autofocus />
+          </div>
+          <div>
+            <label class="field-label" for="confirm">Confirm new password</label>
+            <input type="password" id="confirm" name="confirm"
+                   autocomplete="new-password" minlength="8" required />
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn big" type="submit">Set password →</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

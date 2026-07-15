@@ -22,7 +22,11 @@ See ``docs/OLLAMA_SETUP.md`` for the Windows + Ollama setup guide.
 from __future__ import annotations
 
 from .client import AIClientError, chat, test_connection
-from .features import generate_match_analysis, generate_questions
+from .features import (
+    generate_match_analysis,
+    generate_questions,
+    generate_resume_tailoring,
+)
 from .settings import load_settings, normalize_base_url, save_settings
 
 __all__ = [
@@ -31,6 +35,7 @@ __all__ = [
     "test_connection",
     "generate_questions",
     "generate_match_analysis",
+    "generate_resume_tailoring",
     "load_settings",
     "save_settings",
     "normalize_base_url",

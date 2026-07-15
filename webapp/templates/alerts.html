@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Job alerts — Career Nexus{% endblock %}
+
+{% block content %}
+  <h1>Saved searches &amp; alerts</h1>
+  <p class="sub">Save a search and we'll re-run it on a schedule, emailing you any
+     postings that weren't there last time. Alerts run in the background.</p>
+
+  {% if db_error %}
+    <div class="banner error">Could not reach the database: {{ db_error }}</div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Your alerts</h2>
+    {% if saved_searches %}
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Alert</th><th>Every</th><th>Status</th><th>Last run</th><th>Next run</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for s in saved_searches %}
+            <tr>
+              <td>
+                <strong>{{ s.label or 'Untitled alert' }}</strong>
+                <div class="jobmeta">
+                  {% if s.params.keywords %}{{ s.params.keywords | join(', ') }}{% endif %}
+                  {% if s.params.location %}· 📍 {{ s.params.location }}{% endif %}
+                </div>
+              </td>
+              <td>{{ s.frequency }}</td>
+              <td>
+                {% if s.active %}<span class="src live">active</span>
+                {% else %}<span class="src sample">paused</span>{% endif %}
+              </td>
+              <td class="jobmeta">{{ s.last_run_at or '—' }}</td>
+              <td class="jobmeta">{{ s.next_run_at or '—' }}</td>
+              <td style="white-space:nowrap;">
+                {% if s.last_search_id %}<a href="/matches/{{ s.last_search_id }}">Latest</a> · {% endif %}
+                <form method="post" action="{{ url_for('alerts_toggle', saved_search_id=s.id) }}" style="display:inline;">
+                  <input type="hidden" name="active" value="{{ '0' if s.active else '1' }}" />
+                  <button class="logout-btn" type="submit">{{ 'Pause' if s.active else 'Resume' }}</button>
+                </form> ·
+                <form method="post" action="{{ url_for('alerts_delete', saved_search_id=s.id) }}"
+                      style="display:inline;" onsubmit="return confirm('Delete this alert?');">
+                  <button class="logout-btn" type="submit" style="color:var(--danger);">Delete</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="empty">No alerts yet. Create one below.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>New alert</h2>
+    {% if resumes %}
+    <form method="post" action="{{ url_for('alerts_create') }}">
+      <div class="formgrid">
+        <div class="row2">
+          <div>
+            <label class="field-label" for="resume_id">Resume</label>
+            <select id="resume_id" name="resume_id" required>
+              {% for r in resumes %}
+                <option value="{{ r.id }}">#{{ r.id }} — {{ r.username }} ({{ r.upload_date }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="label">Name <span class="opt">(optional)</span></label>
+            <input type="text" id="label" name="label" placeholder="e.g. Calgary electrician jobs" />
+          </div>
+        </div>
+
+        <div>
+          <label class="field-label" for="keywords">Extra keywords <span class="opt">(optional)</span></label>
+          <input type="text" id="keywords" name="keywords" placeholder="e.g. welding, pipefitter" />
+        </div>
+
+        <div class="row2">
+          <div>
+            <label class="field-label" for="location">Location <span class="opt">(optional)</span></label>
+            <input type="text" id="location" name="location" placeholder="Leave blank to use the resume" />
+          </div>
+          <div>
+            <label class="field-label" for="frequency">Frequency</label>
+            <select id="frequency" name="frequency">
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row2">
+          <div>
+            <label class="field-label" for="country">Job board region</label>
+            <select id="country" name="country">
+              <option value="Canada" {{ 'selected' if default_country == 'Canada' else '' }}>🇨🇦 Canada</option>
+              <option value="USA" {{ 'selected' if default_country == 'USA' else '' }}>🇺🇸 United States</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label">Work type</label>
+            <div class="seg">
+              <label><input type="radio" name="work_type" value="any" checked /><span>Any</span></label>
+              <label><input type="radio" name="work_type" value="remote" /><span>Remote</span></label>
+              <label><input type="radio" name="work_type" value="local" /><span>On-site</span></label>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="field-label">Job boards</label>
+          <div class="checks">
+            {% for site in site_choices %}
+              <label><input type="checkbox" name="sites" value="{{ site.key }}"
+                     {{ 'checked' if site.key in default_sites else '' }} />
+                     <span>{{ site.label }}</span></label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn big" type="submit">Create alert →</button>
+      </div>
+    </form>
+    {% else %}
+      <p class="empty">Upload a resume first — alerts run a search based on one of your resumes.</p>
+      <div class="actions"><a class="btn" href="/">Upload a resume</a></div>
+    {% endif %}
+  </div>
+{% endblock %}

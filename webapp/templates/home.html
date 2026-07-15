@@ -11,7 +11,7 @@
 
     <div class="howitworks">
       <div class="step"><span class="n">STEP 1</span><h3>Upload</h3>
-        <p>Drop in your resume as PDF or DOCX. It's parsed instantly — no account needed.</p></div>
+        <p>Drop in your resume as PDF or DOCX. It's parsed instantly and saved to your account.</p></div>
       <div class="step"><span class="n">STEP 2</span><h3>Review profile</h3>
         <p>Check what we extracted: roles, skills, education, certifications.</p></div>
       <div class="step"><span class="n">STEP 3</span><h3>Job search</h3>
@@ -87,8 +87,7 @@
                   <td>{{ r.username }}</td>
                   <td>{{ r.email }}</td>
                   <td>{{ r.upload_date }}</td>
-                  <td style="white-space:nowrap;"><a href="/profile/{{ r.id }}">Open profile</a> ·
-                      <a href="/download/{{ r.id }}">JSON</a></td>
+                  <td style="white-space:nowrap;"><a href="/profile/{{ r.id }}">Open profile</a></td>
                 </tr>
                 {% endfor %}
               </tbody>

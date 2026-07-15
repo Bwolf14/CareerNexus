@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Your account — Career Nexus{% endblock %}
+
+{% block content %}
+  <h1>Your account</h1>
+  <p class="sub">Manage your data and account.</p>
+
+  <div class="card">
+    <h2>Account details</h2>
+    <p class="jobmeta">Email: <strong>{{ account.email }}</strong></p>
+    <p class="jobmeta">Username: <strong>{{ account.username }}</strong></p>
+  </div>
+
+  <div class="card">
+    <h2>Your data</h2>
+    <p class="sub">Download everything we hold for your account — your resumes and
+       their parsed contents, job searches, saved jobs, and saved searches — as a
+       single JSON file.</p>
+    <div class="actions">
+      <a class="btn" href="{{ url_for('account_export') }}">Download all my data</a>
+    </div>
+  </div>
+
+  <div class="card" style="border-color: rgba(248,113,113,.4);">
+    <h2 style="color: var(--danger);">Delete account</h2>
+    <p class="sub">This permanently deletes your account and <strong>all</strong> of
+       your data — resumes, searches, saved jobs, and saved searches. This can't be
+       undone. Type your email to confirm.</p>
+    <form method="post" action="{{ url_for('account_delete') }}"
+          onsubmit="return confirm('Permanently delete your account and all data? This cannot be undone.');">
+      <div class="formgrid" style="max-width:420px;">
+        <div>
+          <label class="field-label" for="confirm_email">Confirm your email</label>
+          <input type="email" id="confirm_email" name="confirm_email"
+                 placeholder="{{ account.email }}" autocomplete="off" required />
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" type="submit"
+                style="background: var(--danger); border-color: var(--danger); color:#2a0a0a;">
+          Delete my account
+        </button>
+      </div>
+    </form>
+  </div>
+{% endblock %}

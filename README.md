@@ -57,11 +57,14 @@ database everything is written to:
 docker compose up --build
 ```
 
-Then open <http://localhost:8000> and follow the five steps:
+Then open <http://localhost:8000>. The flow is behind a login: **register** with
+an email + password and tick the box consenting to the collection of your data
+(the account can't be created without it). Once signed in, follow the five steps:
 
 1. **Upload** — drop a PDF/DOCX resume; it's parsed with `parse_resume()` and
-   stored (full JSON in `user_resumes.parsed_data`, plus normalised rows in
-   `users`, `skills`/`user_skills`, `resume_experience`, `resume_education`).
+   stored against your account (full JSON in `user_resumes.parsed_data`, plus
+   normalised rows in `users`, `skills`/`user_skills`, `resume_experience`,
+   `resume_education`).
 2. **Your profile** (`/profile/<id>`) — review the extracted contact info,
    experience timeline, education, skills, certifications, and parser
    warnings; tweak search options (keywords, location, work type, region,
@@ -80,39 +83,83 @@ Then open <http://localhost:8000> and follow the five steps:
    **resume-improvement tips** and a **certification-demand analysis**
    ("78% of your matched jobs mention CCNA — consider earning it").
 
-Previous sessions are listed on the home page; each keeps its matches,
-questionnaire answers, and career plan. Resume/jobs JSON stay downloadable
-(`/download/<id>`, `/jobs/download/<id>`) — those two files are exactly what
-the future AI matcher consumes.
+Your previous sessions are listed on the home page (only your own — each account
+sees just its own resumes and searches); each keeps its matches, questionnaire
+answers, and career plan. The search context + postings are still written to
+`job_results/jobs_<id>.json` on the server for the future AI matcher to consume.
 
 No extra setup is required: the `db` service initialises the schema from
 [`init.sql`](init.sql) on first run, and the `web` service waits for the DB to
 become healthy before serving. Connect a client like DBeaver to
 `localhost:3306` (database `careernexus_db`) to browse the stored data.
 
-> **Upgrading an existing checkout:** the schema now includes a
-> `career_plans` table. `init.sql` only runs when the DB volume is first
-> created, so pre-existing volumes need either `docker compose down -v`
-> (wipes stored data) or a one-off
+> **Upgrading an existing database:** [`init.sql`](init.sql) only runs on a
+> *fresh* data volume, and this version adds several tables (accounts/consent
+> columns, `password_resets`, `auth_throttle`, `saved_jobs`, `scrape_jobs`,
+> `saved_searches`) plus `career_plans`. If you already have a `db_data` volume
+> from an earlier version, either reset it with `docker compose down -v` (wipes
+> stored data) or replay the schema once with
 > `docker compose exec db mariadb -uroot -pCareerNexPass32 careernexus_db < init.sql`.
-> Without it the app still works — questionnaire answers just fall back to
-> JSON files in `job_results/`.
+> The app degrades gracefully without the new tables, but the new features
+> (tracker, alerts, background scrapes) need them.
 
-| Service | Image / build      | Port  | Notes                                      |
-| ------- | ------------------ | ----- | ------------------------------------------ |
-| `web`   | `./Dockerfile`     | 8000  | Flask + gunicorn guided flow (healthcheck on `/health`) |
-| `db`    | `mariadb:10.6`     | 3306  | schema from `init.sql`, data in a volume   |
+| Service  | Image / build  | Port  | Notes                                      |
+| -------- | -------------- | ----- | ------------------------------------------ |
+| `web`    | `./Dockerfile` | 8000  | Flask + gunicorn guided flow (healthcheck on `/health`) |
+| `worker` | `./Dockerfile` | —     | background scrape queue + scheduled job alerts |
+| `db`     | `mariadb:10.6` | 3306  | schema from `init.sql`, data in a volume   |
 
 Running the web app outside Docker (for development):
 
 ```bash
 pip install -r requirements-web.txt
-DB_HOST=127.0.0.1 python -m webapp.app    # http://localhost:8000
+DB_HOST=127.0.0.1 SCRAPE_ASYNC=0 python -m webapp.app    # http://localhost:8000
+python -m webapp.worker                                  # (separate shell) queue + alerts
 ```
 
 DB connection settings are read from the `DB_HOST`, `DB_PORT`, `DB_NAME`,
 `DB_USER`, and `DB_PASSWORD` environment variables (defaults match
-`docker-compose.yml`).
+`docker-compose.yml`). Outside Docker you can set `SCRAPE_ASYNC=0` to scrape
+inline in the web request and skip running the worker.
+
+### Accounts, tracker, and alerts
+
+* **Accounts** — register with email + password (a required consent checkbox
+  gates account creation). Forgotten passwords are reset via a one-time link;
+  repeated failed logins are rate-limited. Manage or delete your account (and
+  export all your data as JSON) at `/account`.
+* **Application tracker** (`/saved`) — hit **Save** on any posting to bookmark
+  it, then move it through *Interested → Applied → Interviewing → Offer /
+  Rejected* and jot notes.
+* **Tailor my resume** (`/tailor/...`) — per-posting advice on which of your
+  skills to lead with and which keywords/gaps to address (AI-written when an
+  Ollama server is configured, deterministic otherwise).
+* **Job alerts** (`/alerts`) — save a search to re-run on a daily/weekly
+  schedule; the worker emails you any postings that weren't in the previous run.
+* **Background scrapes** — searches are queued and run by the `worker`
+  container, so the upload/search request returns a progress page instantly
+  instead of blocking for the scrape.
+* **Cross-board dedup** — the same posting found on Indeed *and* Glassdoor is
+  collapsed into one result (tagged "also on …").
+* **OCR** — scanned/image PDFs (no embedded text) are run through Tesseract so
+  they still parse; degrades to a `"failed"` status if the engine is absent.
+
+### Email + scheduling env vars
+
+| Env var         | Default                 | Purpose                                            |
+| --------------- | ----------------------- | -------------------------------------------------- |
+| `SCRAPE_ASYNC`  | `1`                     | Queue scrapes for the worker (`0` = run inline)    |
+| `APP_BASE_URL`  | `http://localhost:8000` | Base URL for links in reset/alert emails           |
+| `SMTP_HOST`     | *(unset)*               | Enable real SMTP; unset → emails printed to the log |
+| `SMTP_PORT`     | `587`                   | SMTP port                                          |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | *(unset)* | SMTP auth (login attempted only when set)   |
+| `SMTP_FROM`     | `no-reply@careernexus.local` | From: address                                 |
+| `WORKER_POLL_SECONDS` | `5`               | How often the worker polls the scrape queue        |
+| `WORKER_SCHEDULE_SECONDS` | `60`          | How often the worker checks for due job alerts     |
+
+Without `SMTP_HOST`, password-reset links and alert emails are written to the
+container log (`docker compose logs worker` / `web`) so the flows work in the
+demo with no mail server.
 
 ## Job Finder (job scraping)
 
@@ -132,8 +179,7 @@ A search kicked off from the profile page will:
 3. store the run in **`job_searches`** and every posting in **`jobs`** (browsable
    in DBeaver, same database), and
 4. write a JSON file to `job_results/jobs_<id>.json` pairing the search context
-   with the postings — ready to hand to the AI matcher alongside the resume JSON
-   (also downloadable at `/jobs/download/<id>`).
+   with the postings — ready to hand to the AI matcher alongside the resume JSON.
 
 If JobSpy is unavailable, the network is blocked, or a search returns nothing,
 the page falls back to clearly-labelled **sample** postings so the demo still

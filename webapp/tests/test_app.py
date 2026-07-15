@@ -85,24 +85,54 @@ SEARCH_ROW = {
 }
 
 
-@pytest.fixture()
-def client(monkeypatch, tmp_path):
-    monkeypatch.setattr(app_module.db, "list_resumes", lambda limit=100: [])
-    monkeypatch.setattr(app_module.db, "list_job_searches", lambda limit=100: [])
-    monkeypatch.setattr(app_module.db, "get_resume_json", lambda rid: PARSED if rid == 3 else None)
-    monkeypatch.setattr(app_module.db, "save_parsed_resume", lambda parsed: 3)
+USER = {"id": 1, "username": "Alex Smith", "email": "alex@example.com"}
+
+
+def _common_stubs(monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module.db, "list_resumes",
+                        lambda limit=100, user_id=None: [])
+    monkeypatch.setattr(app_module.db, "list_job_searches",
+                        lambda limit=100, user_id=None: [])
+    monkeypatch.setattr(app_module.db, "get_resume_json",
+                        lambda rid: PARSED if rid == 3 else None)
+    monkeypatch.setattr(app_module.db, "get_resume_owner",
+                        lambda rid: 1 if rid == 3 else None)
+    monkeypatch.setattr(app_module.db, "save_parsed_resume",
+                        lambda parsed, user_id=None: 3)
     monkeypatch.setattr(app_module.db, "get_job_search",
                         lambda sid: dict(SEARCH_ROW) if sid == 7 else None)
     monkeypatch.setattr(app_module.db, "get_jobs_for_search",
                         lambda sid: list(JOBS) if sid == 7 else [])
-    monkeypatch.setattr(app_module.db, "save_job_search",
-                        lambda *a, **kw: 7)
+    monkeypatch.setattr(app_module.db, "save_job_search", lambda *a, **kw: 7)
+    monkeypatch.setattr(app_module.db, "get_user_by_id",
+                        lambda uid: dict(USER) if uid == 1 else None)
+    monkeypatch.setattr(app_module.db, "saved_dedup_keys", lambda uid: set())
+    monkeypatch.setattr(app_module.db, "enqueue_scrape", lambda *a, **kw: 55)
+    monkeypatch.setattr(app_module.db, "throttle_status", lambda ident: None)
+    monkeypatch.setattr(app_module.db, "record_login_failure", lambda *a, **kw: None)
+    monkeypatch.setattr(app_module.db, "clear_login_failures", lambda ident: None)
     # Keep plan/cache/settings files in a temp dir instead of ./job_results.
     monkeypatch.setenv("JOB_RESULTS_DIR", str(tmp_path))
     monkeypatch.delenv("AI_ENABLED", raising=False)
     monkeypatch.delenv("AI_BASE_URL", raising=False)
     monkeypatch.delenv("AI_MODEL", raising=False)
     app.config["TESTING"] = True
+
+
+@pytest.fixture()
+def client(monkeypatch, tmp_path):
+    """A test client with a logged-in session (user id 1)."""
+    _common_stubs(monkeypatch, tmp_path)
+    with app.test_client() as c:
+        with c.session_transaction() as sess:
+            sess["user_id"] = 1
+        yield c
+
+
+@pytest.fixture()
+def anon_client(monkeypatch, tmp_path):
+    """A test client with no session — for auth/redirect tests."""
+    _common_stubs(monkeypatch, tmp_path)
     with app.test_client() as c:
         yield c
 
@@ -125,7 +155,7 @@ def test_home_renders(client):
 
 
 def test_home_survives_db_outage(client, monkeypatch):
-    def boom(limit=100):
+    def boom(limit=100, user_id=None):
         raise RuntimeError("db down")
     monkeypatch.setattr(app_module.db, "list_resumes", boom)
     resp = client.get("/")
@@ -145,9 +175,17 @@ def test_profile_404_for_unknown_resume(client):
     assert client.get("/profile/999").status_code == 404
 
 
-def test_search_redirects_to_matches(client, monkeypatch):
+def test_search_enqueues_async_by_default(client):
+    # SCRAPE_ASYNC defaults on: the search is queued and we go to the progress page.
+    resp = client.post("/profile/3/search", data={"work_type": "any", "country": "Canada"})
+    assert resp.status_code == 302
+    assert "/scrape/55" in resp.headers["Location"]
+
+
+def test_search_sync_when_async_disabled(client, monkeypatch):
+    monkeypatch.setenv("SCRAPE_ASYNC", "0")
     monkeypatch.setattr(
-        app_module,
+        app_module.search_service,
         "scrape_jobs_for_queries",
         lambda queries, **kw: {"jobs": list(JOBS), "source": "jobspy",
                                "sites": kw.get("sites") or ["indeed"], "errors": []},
@@ -155,6 +193,28 @@ def test_search_redirects_to_matches(client, monkeypatch):
     resp = client.post("/profile/3/search", data={"work_type": "any", "country": "Canada"})
     assert resp.status_code == 302
     assert "/matches/7" in resp.headers["Location"]
+
+
+def test_scrape_status_redirects_when_done(client, monkeypatch):
+    monkeypatch.setattr(
+        app_module.db, "get_scrape_job",
+        lambda jid: {"id": jid, "user_id": 1, "resume_id": 3,
+                     "status": "done", "search_id": 7, "error": None},
+    )
+    resp = client.get("/scrape/55")
+    assert resp.status_code == 302
+    assert "/matches/7" in resp.headers["Location"]
+
+
+def test_scrape_status_shows_progress_while_pending(client, monkeypatch):
+    monkeypatch.setattr(
+        app_module.db, "get_scrape_job",
+        lambda jid: {"id": jid, "user_id": 1, "resume_id": 3,
+                     "status": "pending", "search_id": None, "error": None},
+    )
+    resp = client.get("/scrape/55")
+    assert resp.status_code == 200
+    assert b"Searching live job boards" in resp.data
 
 
 def test_matches_page_lists_jobs(client):
@@ -369,3 +429,123 @@ def test_recommendations_survive_ai_failure(client, ai_client_on, monkeypatch):
     assert resp.status_code == 200
     assert b"AI analysis unavailable" in resp.data
     assert b"Top picks" in resp.data  # heuristic shortlist still renders
+
+
+# ---------------------------------------------------------------------------
+# Authentication + consent gate
+# ---------------------------------------------------------------------------
+def test_anonymous_home_redirects_to_login(anon_client):
+    resp = anon_client.get("/")
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]
+
+
+def test_anonymous_cannot_upload(anon_client):
+    resp = anon_client.post("/upload")
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]
+
+
+def test_login_page_renders(anon_client):
+    resp = anon_client.get("/login")
+    assert resp.status_code == 200
+    assert b"Welcome back" in resp.data
+
+
+def test_register_requires_consent(anon_client, monkeypatch):
+    created = {"n": 0}
+
+    def fake_create(email, pw_hash, consent):
+        created["n"] += 1
+        return 5
+
+    monkeypatch.setattr(app_module.db, "create_user", fake_create)
+    resp = anon_client.post(
+        "/register",
+        data={"email": "new@example.com", "password": "hunter2hunter",
+              "confirm": "hunter2hunter"},  # consent checkbox NOT sent
+    )
+    assert resp.status_code == 400
+    assert b"must consent" in resp.data
+    assert created["n"] == 0  # no account created without consent
+
+
+def test_register_with_consent_creates_account_and_logs_in(anon_client, monkeypatch):
+    captured = {}
+
+    def fake_create(email, pw_hash, consent):
+        captured["email"] = email
+        captured["consent"] = consent
+        return 5
+
+    monkeypatch.setattr(app_module.db, "create_user", fake_create)
+    monkeypatch.setattr(app_module.db, "get_user_by_id",
+                        lambda uid: {"id": 5, "username": "new", "email": "new@example.com"})
+    resp = anon_client.post(
+        "/register",
+        data={"email": "new@example.com", "password": "hunter2hunter",
+              "confirm": "hunter2hunter", "consent": "1"},
+    )
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/")
+    assert captured["consent"] is True
+    with anon_client.session_transaction() as sess:
+        assert sess["user_id"] == 5
+
+
+def test_register_rejects_short_password(anon_client, monkeypatch):
+    monkeypatch.setattr(app_module.db, "create_user",
+                        lambda *a, **kw: pytest.fail("should not be called"))
+    resp = anon_client.post(
+        "/register",
+        data={"email": "new@example.com", "password": "short",
+              "confirm": "short", "consent": "1"},
+    )
+    assert resp.status_code == 400
+    assert b"at least 8 characters" in resp.data
+
+
+def test_login_success_sets_session(anon_client, monkeypatch):
+    from webapp import auth as auth_module
+    pw_hash = auth_module.hash_password("hunter2hunter")
+    monkeypatch.setattr(
+        app_module.db, "get_user_by_email",
+        lambda email: {"id": 9, "username": "u", "email": email,
+                       "password_hash": pw_hash},
+    )
+    resp = anon_client.post(
+        "/login", data={"email": "u@example.com", "password": "hunter2hunter"}
+    )
+    assert resp.status_code == 302
+    with anon_client.session_transaction() as sess:
+        assert sess["user_id"] == 9
+
+
+def test_login_rejects_bad_password(anon_client, monkeypatch):
+    from webapp import auth as auth_module
+    pw_hash = auth_module.hash_password("correct-horse")
+    monkeypatch.setattr(
+        app_module.db, "get_user_by_email",
+        lambda email: {"id": 9, "username": "u", "email": email,
+                       "password_hash": pw_hash},
+    )
+    resp = anon_client.post(
+        "/login", data={"email": "u@example.com", "password": "wrong"}
+    )
+    assert resp.status_code == 401
+    assert b"Incorrect email or password" in resp.data
+
+
+def test_cannot_view_another_users_search(client, monkeypatch):
+    # Search owned by a different account (user_id 2, not the logged-in user 1).
+    other = dict(SEARCH_ROW)
+    other["user_id"] = 2
+    monkeypatch.setattr(app_module.db, "get_job_search", lambda sid: other)
+    assert client.get("/matches/7").status_code == 403
+
+
+def test_logout_clears_session(client):
+    resp = client.post("/logout")
+    assert resp.status_code == 302
+    with client.session_transaction() as sess:
+        assert "user_id" not in sess
