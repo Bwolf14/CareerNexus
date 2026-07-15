@@ -7,19 +7,40 @@
      want to go. Answers sharpen the shortlist on the next page{% if job_count %},
      picked from the <strong>{{ job_count }}</strong> postings we found{% endif %}.</p>
 
-  <div class="banner ai">
-    <strong>🤖 AI interviewer coming soon.</strong> These questions are generated from your
-    resume with templates today. Once the AI profiling step is wired in, it will read your
-    resume <em>and</em> the matched postings, ask sharper follow-ups, and re-search job boards
-    based on your answers.
-  </div>
+  {% if ai_status and ai_status.generator == 'ai' %}
+    <div class="banner ai">
+      <strong>🤖 AI interviewer active.</strong> These questions were written by
+      <code>{{ ai_status.model }}</code> after reading your resume and the matched postings.
+      Not happy with them? <a href="/questions/{{ search_id }}?regen=1">Regenerate</a>
+      (this clears any answers tied to the old questions).
+    </div>
+  {% elif ai_status and ai_status.error %}
+    <div class="banner warn">
+      <strong>AI unavailable</strong> — {{ ai_status.error }}
+      Showing template questions instead; check <a href="/settings">AI settings</a>
+      or <a href="/questions/{{ search_id }}?regen=1">retry</a>.
+    </div>
+  {% elif ai_status and ai_status.configured %}
+    <div class="banner ai">
+      <strong>🤖 Template questions (cached).</strong> These were generated before the AI was
+      connected — <a href="/questions/{{ search_id }}?regen=1">regenerate with
+      <code>{{ ai_status.model }}</code></a>.
+    </div>
+  {% else %}
+    <div class="banner ai">
+      <strong>🤖 AI interviewer available.</strong> These questions are template-generated.
+      Connect your Ollama server in <a href="/settings">AI settings</a> and the model will
+      write follow-ups tailored to your resume and the matched postings instead.
+    </div>
+  {% endif %}
 
   <div class="card">
     <form id="q-form" action="/questions/{{ search_id }}" method="post">
       {% for q in questions %}
         <div class="question">
           <div class="qnum">QUESTION {{ loop.index }} OF {{ questions | length }}
-            {% if q.origin == 'resume' %}<span class="badge ai" style="margin-left:.4rem;">from your resume</span>{% endif %}
+            {% if q.origin == 'ai' %}<span class="badge ai" style="margin-left:.4rem;">AI-generated</span>
+            {% elif q.origin == 'resume' %}<span class="badge ai" style="margin-left:.4rem;">from your resume</span>{% endif %}
           </div>
           <div class="prompt">{{ q.prompt }}</div>
 

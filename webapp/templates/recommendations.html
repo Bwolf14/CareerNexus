@@ -8,12 +8,34 @@
      <strong>{{ picks | length }}</strong> most worth your time, why we picked them, and what
      would make your applications stronger.</p>
 
-  <div class="banner ai">
-    <strong>🤖 AI matching coming soon.</strong> Today this shortlist is ranked by a transparent
-    heuristic — skill overlap, title fit, and your answers (pay range, work style, preferred
-    skills). The AI step will replace these bullet-point reasons with real analysis of growth
-    fit and company culture, and can re-run the search based on your goals.
-  </div>
+  {% if ai_status and ai_status.used %}
+    <div class="banner ai">
+      <strong>🤖 AI analysis by <code>{{ ai_status.model }}</code>.</strong> The shortlist is
+      ranked by transparent heuristics (the ✓ signals below); the model adds the narrative —
+      growth fit, trade-offs, and an overall read of your market.
+      <a href="/recommendations/{{ search_id }}?regen=1">Regenerate analysis</a>.
+    </div>
+  {% elif ai_status and ai_status.error %}
+    <div class="banner warn">
+      <strong>AI analysis unavailable</strong> — {{ ai_status.error }}
+      Showing heuristic reasoning only; check <a href="/settings">AI settings</a> or
+      <a href="/recommendations/{{ search_id }}?regen=1">retry</a>.
+    </div>
+  {% else %}
+    <div class="banner ai">
+      <strong>🤖 Add AI analysis.</strong> This shortlist is ranked by a transparent
+      heuristic — skill overlap, title fit, and your answers (pay range, work style,
+      preferred skills). Connect your Ollama server in <a href="/settings">AI settings</a>
+      and the model will add per-job narrative analysis on top.
+    </div>
+  {% endif %}
+
+  {% if overall_analysis %}
+    <div class="card">
+      <h2>🤖 AI career analysis</h2>
+      <p class="sub" style="font-size:.95rem; margin:0;">{{ overall_analysis }}</p>
+    </div>
+  {% endif %}
 
   {% for note in notes %}
     <div class="banner warn">{{ note }}</div>
@@ -65,6 +87,10 @@
                 couldn't verify skill overlap from its description.</li>
             {% endif %}
           </ul>
+
+          {% if pick.ai_analysis %}
+            <div class="ai-analysis">🤖 {{ pick.ai_analysis }}</div>
+          {% endif %}
 
           {% if job.job_url %}
             <div class="actions" style="margin-top:.8rem;">

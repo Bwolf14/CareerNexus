@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}AI settings — Career Nexus{% endblock %}
+
+{% block content %}
+  <h1>AI settings</h1>
+  <p class="sub">Point Career Nexus at an <strong>Ollama</strong> server (or any
+     OpenAI-compatible endpoint — LM Studio, vLLM) and the AI features light up:
+     the interviewer writes the follow-up questions from your resume, and the career
+     plan gains per-job analysis. Nothing else changes — if the server is off or
+     unreachable, the app falls back to the built-in heuristics automatically.</p>
+
+  {% if s.enabled and s.base_url and s.model %}
+    <div class="banner info"><strong>AI features are ON</strong> — using
+      <code>{{ s.model }}</code> at <code>{{ s.base_url }}</code>.</div>
+  {% else %}
+    <div class="banner ai"><strong>AI features are OFF.</strong> Fill in the server
+      address and model below, test the connection, then enable and save.</div>
+  {% endif %}
+
+  <div class="card">
+    <form method="post" action="/settings" id="settings-form">
+      <div class="formgrid">
+        <div>
+          <label class="field-label" for="base_url">AI server address</label>
+          <input type="text" id="base_url" name="base_url" value="{{ s.base_url }}"
+                 placeholder="e.g. 192.168.1.50:11434 (the PC running Ollama)" />
+          <div class="hint">IP or hostname of the machine running Ollama. Port 11434 for
+            Ollama, 1234 for LM Studio. <code>/v1</code> is added automatically.</div>
+        </div>
+
+        <div class="actions" style="margin-top:0;">
+          <button class="btn secondary" type="button" id="test-btn">Test connection</button>
+          <span class="spinner" id="test-spinner">Contacting the server…</span>
+        </div>
+        <div id="test-result"></div>
+
+        <div>
+          <label class="field-label" for="model">Model</label>
+          <input type="text" id="model" name="model" value="{{ s.model }}"
+                 list="model-list" placeholder="e.g. qwen3:32b" />
+          <datalist id="model-list"></datalist>
+          <div class="hint">Must match a tag from <code>ollama list</code> on the server —
+            “Test connection” fills in the choices for you.</div>
+        </div>
+
+        <div>
+          <label class="field-label">Enable AI features</label>
+          <div class="checks">
+            <label><input type="checkbox" name="enabled" value="1"
+                          {{ 'checked' if s.enabled else '' }} />
+                   <span>Use the AI server for questions &amp; match analysis</span></label>
+          </div>
+        </div>
+
+        <details class="advanced">
+          <summary>Timeouts</summary>
+          <div class="inner">
+            <div class="row2">
+              <div>
+                <label class="field-label" for="connect_timeout">Connect timeout (seconds)</label>
+                <input type="number" id="connect_timeout" name="connect_timeout"
+                       min="1" max="30" step="1" value="{{ s.connect_timeout | int }}" />
+                <div class="hint">How long to wait for the server to answer at all. Keep this
+                  short — it's what a powered-off PC costs each page load.</div>
+              </div>
+              <div>
+                <label class="field-label" for="read_timeout">Response timeout (seconds)</label>
+                <input type="number" id="read_timeout" name="read_timeout"
+                       min="10" max="600" step="10" value="{{ s.read_timeout | int }}" />
+                <div class="hint">How long to wait for a full generation. First request after
+                  idle includes model load time (10–30&nbsp;s on a fast GPU).</div>
+              </div>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div class="actions">
+        <button class="btn big" type="submit">Save settings</button>
+        <a class="btn ghost" href="/">Back to home</a>
+      </div>
+      <div class="hint" style="margin-top:.6rem;">Saved to <code>{{ settings_file }}</code>
+        (survives container restarts). Environment variables
+        <code>AI_BASE_URL</code> / <code>AI_MODEL</code> / <code>AI_ENABLED</code> provide the
+        defaults until you save here.</div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Setting up Ollama on the Windows PC — quick version</h2>
+    <ol style="color:var(--muted); font-size:.92rem; line-height:1.8; margin:.4rem 0 0; padding-left:1.3rem;">
+      <li>Install Ollama from <code>ollama.com/download/windows</code>, then
+          <code>ollama pull qwen3:32b</code> (or your model of choice).</li>
+      <li>Set the system environment variable <code>OLLAMA_HOST</code> to
+          <code>0.0.0.0</code> and restart Ollama — by default it only listens on
+          localhost, so nothing else on the network can reach it.</li>
+      <li>Allow inbound TCP <strong>11434</strong> through Windows Defender Firewall
+          (Private networks only).</li>
+      <li>Give the PC a static IP or DHCP reservation, enter it above, and hit
+          <em>Test connection</em>.</li>
+    </ol>
+    <p class="hint" style="margin-top:.8rem;">Full walkthrough with PowerShell commands,
+      power-settings advice, and troubleshooting: <code>docs/OLLAMA_SETUP.md</code> in the
+      repository. Keep the server LAN-only — Ollama has no authentication.</p>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const btn = document.getElementById('test-btn');
+  const spinner = document.getElementById('test-spinner');
+  const result = document.getElementById('test-result');
+  const baseUrl = document.getElementById('base_url');
+  const modelInput = document.getElementById('model');
+  const modelList = document.getElementById('model-list');
+
+  btn.addEventListener('click', async () => {
+    result.innerHTML = '';
+    modelList.innerHTML = '';
+    btn.disabled = true;
+    spinner.style.display = 'inline-block';
+    try {
+      const resp = await fetch('/api/ai/test', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({base_url: baseUrl.value}),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        if (data.normalized_url) baseUrl.value = data.normalized_url;
+        const models = data.models || [];
+        models.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m;
+          modelList.appendChild(opt);
+        });
+        const chips = models.slice(0, 12).map(m =>
+          `<button type="button" class="btn ghost model-chip" style="padding:.3rem .7rem; font-size:.8rem;">${m}</button>`
+        ).join(' ');
+        result.innerHTML =
+          `<div class="banner info" style="margin-top:.2rem;"><strong>Connected</strong> in ${data.latency_ms} ms — ` +
+          `${models.length} model${models.length === 1 ? '' : 's'} available.` +
+          (chips ? `<div style="margin-top:.6rem; display:flex; gap:.4rem; flex-wrap:wrap;">${chips}</div>` : '') +
+          `</div>`;
+        result.querySelectorAll('.model-chip').forEach(chip =>
+          chip.addEventListener('click', () => { modelInput.value = chip.textContent; }));
+      } else {
+        result.innerHTML =
+          `<div class="banner error" style="margin-top:.2rem;"><strong>Connection failed:</strong> ${data.error}</div>`;
+      }
+    } catch (err) {
+      result.innerHTML =
+        `<div class="banner error" style="margin-top:.2rem;"><strong>Test failed:</strong> ${err}</div>`;
+    } finally {
+      btn.disabled = false;
+      spinner.style.display = 'none';
+    }
+  });
+</script>
+{% endblock %}

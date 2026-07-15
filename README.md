@@ -13,6 +13,7 @@ Subsystems, each usable on its own:
 | `resume_parser/` | PDF/DOCX → validated `ParsedResume` JSON (regex/layout heuristics)  |
 | `job_scraper/`   | parsed resume → job-board queries → live postings via JobSpy        |
 | `job_matcher/`   | heuristic ranking, certification-demand analysis, template questions, resume tips |
+| `ai_client/`     | optional: talks to a self-hosted LLM (Ollama etc.) for AI questions + match analysis |
 | `webapp/`        | the guided five-step Flask UI wiring it all together                |
 
 The parser is the implementation of the design in
@@ -183,6 +184,41 @@ integrated:
 When the AI step lands, it replaces the *content* of these outputs (reasons,
 question wording, tips) — the plumbing and UI stay as-is.
 
+## AI integration (optional, self-hosted)
+
+Point Career Nexus at an **Ollama** server — typically a GPU box elsewhere on
+the LAN — and two features switch from deterministic to model-generated:
+
+- the **follow-up questionnaire** is written by the model after reading the
+  resume *and* the matched postings (the structured pay/work-style/skills
+  questions that feed the ranking are always kept), and
+- the **career plan** gains per-job narrative analysis plus an overall
+  market summary, layered on top of the heuristic match signals.
+
+Setup is done from the UI: **AI settings** (`/settings`) takes the server
+address, has a *Test connection* button that lists the models installed on
+the server, and saves to `job_results/ai_settings.json`. Environment
+variables provide boot-time defaults:
+
+| Env var              | Example                       | Purpose                          |
+| -------------------- | ----------------------------- | -------------------------------- |
+| `AI_ENABLED`         | `1`                           | Turn the AI features on at boot  |
+| `AI_BASE_URL`        | `http://192.168.1.50:11434`   | The Ollama/LM Studio/vLLM server |
+| `AI_MODEL`           | `qwen3:32b`                   | Model tag (`ollama list`)        |
+| `AI_CONNECT_TIMEOUT` | `4`                           | Seconds to detect a dead server  |
+| `AI_READ_TIMEOUT`    | `180`                         | Seconds to wait for a generation |
+
+The app speaks the OpenAI-compatible chat API, so anything exposing
+`/v1/chat/completions` works (Ollama, LM Studio, vLLM, cloud endpoints).
+Failures degrade gracefully: an unreachable or misbehaving server falls back
+to template questions and heuristic-only ranking, with the reason shown in
+the UI. Generated questionnaires are cached per search so answers always map
+to the questions the user actually saw; analyses are cached and regenerate
+when the answers or shortlist change (or via the *Regenerate* links).
+
+**Full Windows + Ollama walkthrough** (firewall, `OLLAMA_HOST`, keep-alive,
+troubleshooting): [`docs/OLLAMA_SETUP.md`](docs/OLLAMA_SETUP.md).
+
 ## Output shape
 
 `parse_resume` always returns a valid `ParsedResume`. Key guarantees
@@ -256,9 +292,13 @@ python -m pytest -q          # parser + matcher + web routes (no DB/network need
 - **Matcher tests** (`job_matcher/tests/`) cover scoring/ranking, answer
   handling (pay range, work style), certification gap/held detection with
   word-boundary edge cases, question generation, and resume tips.
+- **AI client tests** (`ai_client/tests/`) cover settings persistence and
+  URL normalisation, tolerant JSON extraction (code fences, `<think>`
+  blocks), and the question/analysis features against a faked model.
 - **Web tests** (`webapp/tests/`) exercise the full five-step flow through
   Flask's test client with the DB and scraper stubbed — including the
-  degraded paths (DB down, skipped questionnaire, legacy URL redirects).
+  degraded paths (DB down, skipped questionnaire, legacy URL redirects) and
+  the AI paths (settings page, cached AI questions, analysis fallback).
 
 ## Known limitations (v2 backlog)
 

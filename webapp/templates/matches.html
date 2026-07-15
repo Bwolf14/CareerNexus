@@ -35,6 +35,9 @@
         {% if search_id %}
           <a class="btn big" href="/questions/{{ search_id }}">Continue: tell us more →</a>
           <div class="hint" style="margin-top:.5rem;">4–8 quick questions → your personalised shortlist</div>
+          {% if ai_on %}
+            <div class="hint">🤖 May take a few seconds — the AI drafts your questions.</div>
+          {% endif %}
         {% endif %}
       </div>
     </div>
