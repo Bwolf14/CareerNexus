@@ -6,6 +6,7 @@
   <title>{% block title %}Career Nexus{% endblock %}</title>
   <link rel="icon" href="data:image/svg+xml,{{ '<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%2338bdf8%22/><text x=%2250%22 y=%2268%22 font-size=%2252%22 text-anchor=%22middle%22 font-family=%22system-ui%22 font-weight=%22800%22 fill=%22%2304293a%22>CN</text></svg>' }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  {% block head %}{% endblock %}
 </head>
 <body>
   <div class="wrap">
@@ -18,9 +19,10 @@
       <div class="links">
         {% if current_user %}
           <a href="/">New session</a>
-          <a href="/#history">History</a>
+          <a href="{{ url_for('saved_jobs_page') }}">Saved jobs</a>
+          <a href="{{ url_for('alerts_page') }}">Alerts</a>
           <a href="/settings">AI settings</a>
-          <span class="who">{{ current_user.email }}</span>
+          <a href="{{ url_for('account') }}">Account</a>
           <form method="post" action="{{ url_for('logout') }}" style="display:inline;">
             <button class="logout-btn" type="submit">Log out</button>
           </form>

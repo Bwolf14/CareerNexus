@@ -76,11 +76,29 @@
     {% if jobs %}
       <div id="joblist">
         {% for job in jobs %}
-          <div class="job" data-text="{{ ((job.title or '') ~ ' ' ~ (job.company or '') ~ ' ' ~ (job.location or '')) | lower }}">
-            <h3>
-              {% if job.job_url %}<a href="{{ job.job_url }}" target="_blank" rel="noopener">{{ job.title or 'Untitled posting' }}</a>
-              {% else %}{{ job.title or 'Untitled posting' }}{% endif %}
-            </h3>
+          <div class="job" id="job-{{ job.dedup_key }}" data-text="{{ ((job.title or '') ~ ' ' ~ (job.company or '') ~ ' ' ~ (job.location or '')) | lower }}">
+            <div class="job-head">
+              <h3>
+                {% if job.job_url %}<a href="{{ job.job_url }}" target="_blank" rel="noopener">{{ job.title or 'Untitled posting' }}</a>
+                {% else %}{{ job.title or 'Untitled posting' }}{% endif %}
+              </h3>
+              {% if search_id %}
+                <div class="job-actions">
+                  {% if resume_id %}
+                    <a class="btn ghost btn-save" href="{{ url_for('tailor', search_id=search_id, dedup_key=job.dedup_key) }}">✎ Tailor</a>
+                  {% endif %}
+                  {% if job.dedup_key in saved_keys %}
+                    <span class="saved-chip">✓ Saved</span>
+                  {% else %}
+                    <form method="post" action="{{ url_for('saved_add') }}">
+                      <input type="hidden" name="search_id" value="{{ search_id }}" />
+                      <input type="hidden" name="dedup_key" value="{{ job.dedup_key }}" />
+                      <button class="btn ghost btn-save" type="submit">☆ Save</button>
+                    </form>
+                  {% endif %}
+                </div>
+              {% endif %}
+            </div>
             <div>
               <span class="company">{{ job.company or 'Unknown company' }}</span>
               {% if job.location %}<span class="jobmeta"> · {{ job.location }}</span>{% endif %}
@@ -90,6 +108,7 @@
               {% if job.is_remote %}<span class="badge remote">Remote</span>{% endif %}
               {% if job.job_type %}<span class="badge">{{ job.job_type }}</span>{% endif %}
               {% if job.source_site %}<span class="badge">{{ job.source_site }}</span>{% endif %}
+              {% if job.also_on %}<span class="badge">also on {{ job.also_on | join(', ') }}</span>{% endif %}
               {% if job.date_posted %}<span class="badge">Posted {{ job.date_posted }}</span>{% endif %}
               {% if job.search_term %}<span class="badge">↳ {{ job.search_term }}</span>{% endif %}
             </div>

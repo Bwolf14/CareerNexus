@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Tailor your resume — Career Nexus{% endblock %}
+
+{% block content %}
+  <h1>Tailor your resume</h1>
+  <p class="sub">Concrete suggestions for adapting your resume to this specific posting.
+     {% if ai_status.used %}<span class="badge ai">AI · {{ ai_status.model }}</span>
+     {% else %}<span class="badge">rule-based</span>{% endif %}</p>
+
+  {% if ai_status.error %}
+    <div class="banner warn">AI tailoring unavailable ({{ ai_status.error }}) — showing rule-based advice.</div>
+  {% endif %}
+
+  <div class="card">
+    <div class="job-head">
+      <h2 style="margin:0;">
+        {% if job.job_url %}<a href="{{ job.job_url }}" target="_blank" rel="noopener">{{ job.title or 'Untitled posting' }}</a>
+        {% else %}{{ job.title or 'Untitled posting' }}{% endif %}
+      </h2>
+    </div>
+    <div><span class="company">{{ job.company or 'Unknown company' }}</span>
+      {% if job.location %}<span class="jobmeta"> · {{ job.location }}</span>{% endif %}</div>
+
+    {% if tailoring.summary %}<p style="margin-top:1rem;">{{ tailoring.summary }}</p>{% endif %}
+
+    {% if tailoring.emphasize %}
+    <h3 style="margin-top:1.1rem;">Lead with these (you have them, the posting wants them)</h3>
+    <div>{% for s in tailoring.emphasize %}<span class="pill">{{ s }}</span>{% endfor %}</div>
+    {% endif %}
+
+    {% if tailoring.add %}
+    <h3 style="margin-top:1.1rem;">Keywords / gaps to consider</h3>
+    <div>{% for s in tailoring.add %}<span class="pill">{{ s }}</span>{% endfor %}</div>
+    {% endif %}
+
+    {% if tailoring.bullets %}
+    <h3 style="margin-top:1.1rem;">Suggestions</h3>
+    <ul>{% for b in tailoring.bullets %}<li style="margin:.3rem 0;">{{ b }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    <div class="actions">
+      <a class="btn ghost" href="{{ url_for('matches', search_id=search_id) }}">← Back to matches</a>
+      {% if ai_status.configured %}
+        <a class="btn secondary" href="{{ url_for('tailor', search_id=search_id, dedup_key=job.dedup_key) }}">↻ Regenerate</a>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

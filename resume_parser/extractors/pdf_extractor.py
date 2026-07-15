@@ -36,15 +36,19 @@ _FLAG_BOLD = 1 << 4     # 16
 _BOLD_NAME_HINTS = ("bold", "black", "heavy", "semibold", "demibold")
 _ITALIC_NAME_HINTS = ("italic", "oblique")
 
-# Minimum total characters below which we treat the PDF as scanned / empty.
-# (The parser turns this into a "failed" status + warning; see parser.py.)
 _GUTTER_STEP = 3.0
 _GUTTER_MIN_SIDE_LINES = 3
+
+# Below this many extracted characters we treat the PDF as scanned/image-only
+# and try the OCR fallback (if Tesseract is available). Kept low so a normal
+# text PDF never triggers a needless OCR pass.
+_OCR_TRIGGER_CHARS = 30
 
 
 class PdfExtractor:
     def extract(self, filepath: str) -> ExtractedDocument:
         doc = fitz.open(filepath)
+        ocr_used = False
         try:
             page_widths: dict[int, float] = {}
             lines: list[dict] = []
@@ -52,10 +56,22 @@ class PdfExtractor:
                 page = doc[pno]
                 page_widths[pno] = float(page.rect.width)
                 self._collect_page_lines(page, pno, lines)
+
+            # Scanned/image PDF: no embedded text -> try OCR before giving up.
+            total_chars = sum(len(l["text"].strip()) for l in lines)
+            if total_chars < _OCR_TRIGGER_CHARS:
+                from .ocr import ocr_available, ocr_document_lines
+
+                if ocr_available():
+                    ocr_lines = ocr_document_lines(doc)
+                    if ocr_lines:
+                        lines = ocr_lines
+                        ocr_used = True
         finally:
             doc.close()
 
-        table_regions = self._table_regions(filepath)
+        # OCR output has no table structure; skip pdfplumber in that case.
+        table_regions = {} if ocr_used else self._table_regions(filepath)
         blocks, column_count = self._assemble(lines, page_widths, table_regions)
         return ExtractedDocument(
             source_format="pdf", blocks=blocks, column_count=column_count

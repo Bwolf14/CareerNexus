@@ -145,3 +145,106 @@ CREATE TABLE IF NOT EXISTS job_skills (
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
     FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
 );
+
+-- ---------------------------------------------------------------------------
+-- Accounts: password resets + brute-force throttle
+-- ---------------------------------------------------------------------------
+-- Single-use, time-limited password-reset tokens. Only the SHA-256 hash of the
+-- token is stored, so a database leak doesn't hand out working reset links.
+CREATE TABLE IF NOT EXISTS password_resets (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    token_hash CHAR(64) NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    used_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_reset_token (token_hash),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Login throttle: one row per identifier (email / client ip). fail_count is
+-- reset on a successful login; locked_until stops further attempts after too
+-- many failures. Keyed small so it stays cheap to check on every login.
+CREATE TABLE IF NOT EXISTS auth_throttle (
+    identifier VARCHAR(255) PRIMARY KEY,
+    fail_count INT NOT NULL DEFAULT 0,
+    locked_until TIMESTAMP NULL,
+    last_attempt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------------
+-- Saved jobs + application tracker
+-- ---------------------------------------------------------------------------
+-- A posting a user bookmarked, with its application status. The posting fields
+-- are snapshotted (not a FK to jobs) so a saved job survives its search being
+-- deleted. UNIQUE(user, dedup_key) keeps the same posting from being saved
+-- twice; dedup_key is a normalised title|company|location hash.
+CREATE TABLE IF NOT EXISTS saved_jobs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    dedup_key CHAR(40) NOT NULL,
+    title VARCHAR(255),
+    company VARCHAR(255),
+    location VARCHAR(255),
+    source_site VARCHAR(50),
+    salary_display VARCHAR(120),
+    is_remote BOOLEAN DEFAULT FALSE,
+    job_url TEXT,
+    description LONGTEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'interested',  -- interested/applied/interviewing/offer/rejected
+    notes TEXT,
+    saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_saved_per_user (user_id, dedup_key),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- ---------------------------------------------------------------------------
+-- Background scrape queue (processed by the worker container)
+-- ---------------------------------------------------------------------------
+-- One row per queued/async scrape. The web app inserts a 'pending' row and
+-- returns immediately; the worker claims it (pending -> running), runs the
+-- scrape, stores the results as a normal job_searches row, and records the
+-- resulting search_id here. saved_search_id is set when a scheduled alert
+-- enqueued the run.
+CREATE TABLE IF NOT EXISTS scrape_jobs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    resume_id INT,
+    saved_search_id INT,
+    params JSON,                        -- keywords/location/work_type/country/sites
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending/running/done/error
+    search_id INT,                      -- the job_searches row this produced
+    error TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP NULL,
+    finished_at TIMESTAMP NULL,
+    INDEX idx_scrape_status (status, id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (resume_id) REFERENCES user_resumes(id) ON DELETE CASCADE,
+    FOREIGN KEY (search_id) REFERENCES job_searches(id) ON DELETE SET NULL
+);
+
+-- ---------------------------------------------------------------------------
+-- Saved searches + scheduled alerts
+-- ---------------------------------------------------------------------------
+-- A recurring search the user wants re-run on a schedule. The worker's
+-- scheduler finds rows whose next_run_at has passed, enqueues a scrape_jobs
+-- row for each, and emails the user any postings not seen in the previous run.
+CREATE TABLE IF NOT EXISTS saved_searches (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    resume_id INT NOT NULL,
+    label VARCHAR(255),
+    params JSON,                        -- same shape as scrape_jobs.params
+    frequency VARCHAR(20) NOT NULL DEFAULT 'daily',  -- daily/weekly
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_run_at TIMESTAMP NULL,
+    next_run_at TIMESTAMP NULL,
+    last_search_id INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_saved_search_due (active, next_run_at),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (resume_id) REFERENCES user_resumes(id) ON DELETE CASCADE,
+    FOREIGN KEY (last_search_id) REFERENCES job_searches(id) ON DELETE SET NULL
+);

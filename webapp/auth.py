@@ -12,6 +12,8 @@ to sensitive-data collection (enforced in the route, recorded on the account).
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 from functools import wraps
 from typing import Any, Callable, Optional
 
@@ -21,6 +23,23 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from . import db
 
 SESSION_KEY = "user_id"
+
+# Password-reset tokens are valid for this long.
+RESET_TTL_SECONDS = 60 * 60  # 1 hour
+# Login throttle: lock an identifier for LOGIN_LOCK_SECONDS after MAX_LOGIN_FAILS.
+MAX_LOGIN_FAILS = 8
+LOGIN_LOCK_SECONDS = 15 * 60  # 15 minutes
+
+
+def new_reset_token() -> tuple[str, str]:
+    """Return (raw_token, token_hash). Only the hash is ever stored."""
+    token = secrets.token_urlsafe(32)
+    return token, hash_token(token)
+
+
+def hash_token(token: str) -> str:
+    """SHA-256 of a reset token — what goes in the database."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def hash_password(password: str) -> str:

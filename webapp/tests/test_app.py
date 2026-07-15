@@ -106,6 +106,11 @@ def _common_stubs(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module.db, "save_job_search", lambda *a, **kw: 7)
     monkeypatch.setattr(app_module.db, "get_user_by_id",
                         lambda uid: dict(USER) if uid == 1 else None)
+    monkeypatch.setattr(app_module.db, "saved_dedup_keys", lambda uid: set())
+    monkeypatch.setattr(app_module.db, "enqueue_scrape", lambda *a, **kw: 55)
+    monkeypatch.setattr(app_module.db, "throttle_status", lambda ident: None)
+    monkeypatch.setattr(app_module.db, "record_login_failure", lambda *a, **kw: None)
+    monkeypatch.setattr(app_module.db, "clear_login_failures", lambda ident: None)
     # Keep plan/cache/settings files in a temp dir instead of ./job_results.
     monkeypatch.setenv("JOB_RESULTS_DIR", str(tmp_path))
     monkeypatch.delenv("AI_ENABLED", raising=False)
@@ -170,9 +175,17 @@ def test_profile_404_for_unknown_resume(client):
     assert client.get("/profile/999").status_code == 404
 
 
-def test_search_redirects_to_matches(client, monkeypatch):
+def test_search_enqueues_async_by_default(client):
+    # SCRAPE_ASYNC defaults on: the search is queued and we go to the progress page.
+    resp = client.post("/profile/3/search", data={"work_type": "any", "country": "Canada"})
+    assert resp.status_code == 302
+    assert "/scrape/55" in resp.headers["Location"]
+
+
+def test_search_sync_when_async_disabled(client, monkeypatch):
+    monkeypatch.setenv("SCRAPE_ASYNC", "0")
     monkeypatch.setattr(
-        app_module,
+        app_module.search_service,
         "scrape_jobs_for_queries",
         lambda queries, **kw: {"jobs": list(JOBS), "source": "jobspy",
                                "sites": kw.get("sites") or ["indeed"], "errors": []},
@@ -180,6 +193,28 @@ def test_search_redirects_to_matches(client, monkeypatch):
     resp = client.post("/profile/3/search", data={"work_type": "any", "country": "Canada"})
     assert resp.status_code == 302
     assert "/matches/7" in resp.headers["Location"]
+
+
+def test_scrape_status_redirects_when_done(client, monkeypatch):
+    monkeypatch.setattr(
+        app_module.db, "get_scrape_job",
+        lambda jid: {"id": jid, "user_id": 1, "resume_id": 3,
+                     "status": "done", "search_id": 7, "error": None},
+    )
+    resp = client.get("/scrape/55")
+    assert resp.status_code == 302
+    assert "/matches/7" in resp.headers["Location"]
+
+
+def test_scrape_status_shows_progress_while_pending(client, monkeypatch):
+    monkeypatch.setattr(
+        app_module.db, "get_scrape_job",
+        lambda jid: {"id": jid, "user_id": 1, "resume_id": 3,
+                     "status": "pending", "search_id": None, "error": None},
+    )
+    resp = client.get("/scrape/55")
+    assert resp.status_code == 200
+    assert b"Searching live job boards" in resp.data
 
 
 def test_matches_page_lists_jobs(client):

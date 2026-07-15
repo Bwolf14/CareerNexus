@@ -596,3 +596,664 @@ def get_jobs_for_search(search_id: int) -> list[dict[str, Any]]:
             return cur.fetchall()
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Password resets
+# ---------------------------------------------------------------------------
+def create_password_reset(user_id: int, token_hash: str, expires_at) -> None:
+    """Store a single-use reset token hash; invalidate the user's older ones."""
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE password_resets SET used_at = CURRENT_TIMESTAMP "
+                "WHERE user_id = %s AND used_at IS NULL",
+                (user_id,),
+            )
+            cur.execute(
+                "INSERT INTO password_resets (user_id, token_hash, expires_at) "
+                "VALUES (%s, %s, %s)",
+                (user_id, token_hash, expires_at),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_valid_reset(token_hash: str) -> Optional[dict[str, Any]]:
+    """Return an unused, unexpired reset row (id, user_id), or None."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, user_id FROM password_resets
+                WHERE token_hash = %s AND used_at IS NULL
+                      AND expires_at > CURRENT_TIMESTAMP
+                """,
+                (token_hash,),
+            )
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def reset_password(reset_id: int, user_id: int, password_hash: str) -> None:
+    """Set a new password hash and mark the reset token consumed, atomically."""
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET password_hash = %s WHERE id = %s",
+                (password_hash, user_id),
+            )
+            cur.execute(
+                "UPDATE password_resets SET used_at = CURRENT_TIMESTAMP WHERE id = %s",
+                (reset_id,),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Login throttle (brute-force protection)
+# ---------------------------------------------------------------------------
+def throttle_status(identifier: str) -> Optional[Any]:
+    """Return ``locked_until`` if the identifier is currently locked, else None."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT locked_until FROM auth_throttle "
+                "WHERE identifier = %s AND locked_until IS NOT NULL "
+                "AND locked_until > CURRENT_TIMESTAMP",
+                (identifier[:255],),
+            )
+            row = cur.fetchone()
+            return row["locked_until"] if row else None
+    finally:
+        conn.close()
+
+
+def record_login_failure(identifier: str, max_fails: int, lock_seconds: int) -> None:
+    """Increment the failure counter; lock the identifier once it hits max_fails."""
+    identifier = identifier[:255]
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO auth_throttle (identifier, fail_count)
+                VALUES (%s, 1)
+                ON DUPLICATE KEY UPDATE fail_count = fail_count + 1
+                """,
+                (identifier,),
+            )
+            cur.execute(
+                """
+                UPDATE auth_throttle
+                SET locked_until = CURRENT_TIMESTAMP + INTERVAL %s SECOND
+                WHERE identifier = %s AND fail_count >= %s
+                """,
+                (lock_seconds, identifier, max_fails),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def clear_login_failures(identifier: str) -> None:
+    """Reset the throttle for an identifier after a successful login."""
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM auth_throttle WHERE identifier = %s", (identifier[:255],)
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Account data export + deletion
+# ---------------------------------------------------------------------------
+def export_user_data(user_id: int) -> dict[str, Any]:
+    """Gather everything stored for an account into one JSON-serialisable dict."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, username, email, consent_data_collection, consent_at, "
+                "created_at FROM users WHERE id = %s",
+                (user_id,),
+            )
+            account = cur.fetchone()
+
+            cur.execute(
+                "SELECT id, parsed_data, upload_date FROM user_resumes "
+                "WHERE user_id = %s ORDER BY id",
+                (user_id,),
+            )
+            resumes = cur.fetchall()
+            for r in resumes:
+                data = r.get("parsed_data")
+                if isinstance(data, (str, bytes, bytearray)):
+                    try:
+                        r["parsed_data"] = json.loads(data)
+                    except Exception:
+                        pass
+
+            cur.execute(
+                "SELECT id, search_terms, location, sites_searched, source, "
+                "results_count, ran_at FROM job_searches WHERE user_id = %s ORDER BY id",
+                (user_id,),
+            )
+            searches = cur.fetchall()
+
+            cur.execute(
+                "SELECT id, title, company, location, source_site, salary_display, "
+                "is_remote, job_url, status, notes, saved_at, updated_at "
+                "FROM saved_jobs WHERE user_id = %s ORDER BY id",
+                (user_id,),
+            )
+            saved = cur.fetchall()
+
+            cur.execute(
+                "SELECT id, label, params, frequency, active, last_run_at, "
+                "next_run_at FROM saved_searches WHERE user_id = %s ORDER BY id",
+                (user_id,),
+            )
+            saved_searches = cur.fetchall()
+        return {
+            "account": account,
+            "resumes": resumes,
+            "job_searches": searches,
+            "saved_jobs": saved,
+            "saved_searches": saved_searches,
+        }
+    finally:
+        conn.close()
+
+
+def delete_user(user_id: int) -> None:
+    """Delete an account and everything belonging to it.
+
+    Most child tables cascade from ``users``; ``job_searches`` is
+    ``ON DELETE SET NULL``, so its rows are removed explicitly first (which
+    cascades to ``jobs`` and ``career_plans``).
+    """
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM job_searches WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Saved jobs + application tracker
+# ---------------------------------------------------------------------------
+SAVED_JOB_STATUSES = ("interested", "applied", "interviewing", "offer", "rejected")
+
+
+def save_job(user_id: int, dedup_key: str, job: dict[str, Any]) -> int:
+    """Bookmark a posting for a user (idempotent per dedup_key); return row id."""
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO saved_jobs
+                    (user_id, dedup_key, title, company, location, source_site,
+                     salary_display, is_remote, job_url, description)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+                """,
+                (
+                    user_id,
+                    dedup_key[:40],
+                    (job.get("title") or None) and job["title"][:255],
+                    (job.get("company") or None) and job["company"][:255],
+                    (job.get("location") or None) and job["location"][:255],
+                    (job.get("source_site") or None) and job["source_site"][:50],
+                    (job.get("salary_display") or None) and job["salary_display"][:120],
+                    bool(job.get("is_remote")),
+                    job.get("job_url"),
+                    job.get("description"),
+                ),
+            )
+            saved_id = cur.lastrowid
+        conn.commit()
+        return saved_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def list_saved_jobs(user_id: int) -> list[dict[str, Any]]:
+    """All of a user's saved jobs, newest first."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM saved_jobs WHERE user_id = %s "
+                "ORDER BY updated_at DESC, id DESC",
+                (user_id,),
+            )
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def saved_dedup_keys(user_id: int) -> set:
+    """The set of dedup_keys a user has already saved (to flag them in matches)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT dedup_key FROM saved_jobs WHERE user_id = %s", (user_id,))
+            return {row["dedup_key"] for row in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def update_saved_job(
+    user_id: int, saved_id: int, status: Optional[str], notes: Optional[str]
+) -> bool:
+    """Update a saved job's status and/or notes. Returns False if not owned."""
+    sets, params = [], []
+    if status is not None:
+        if status not in SAVED_JOB_STATUSES:
+            raise ValueError(f"invalid status: {status}")
+        sets.append("status = %s")
+        params.append(status)
+    if notes is not None:
+        sets.append("notes = %s")
+        params.append(notes[:2000] if notes else None)
+    if not sets:
+        return True
+    params.extend([saved_id, user_id])
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE saved_jobs SET {', '.join(sets)} "
+                "WHERE id = %s AND user_id = %s",
+                params,
+            )
+            changed = cur.rowcount
+        conn.commit()
+        return changed > 0
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def delete_saved_job(user_id: int, saved_id: int) -> bool:
+    """Remove a saved job; returns False if it isn't the user's."""
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM saved_jobs WHERE id = %s AND user_id = %s",
+                (saved_id, user_id),
+            )
+            changed = cur.rowcount
+        conn.commit()
+        return changed > 0
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Background scrape queue
+# ---------------------------------------------------------------------------
+def enqueue_scrape(
+    user_id: Optional[int],
+    resume_id: int,
+    params: dict[str, Any],
+    saved_search_id: Optional[int] = None,
+) -> int:
+    """Insert a pending scrape job for the worker to pick up; return its id."""
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO scrape_jobs (user_id, resume_id, saved_search_id, params)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (user_id, resume_id, saved_search_id, json.dumps(params)),
+            )
+            job_id = cur.lastrowid
+        conn.commit()
+        return job_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_scrape_job(job_id: int) -> Optional[dict[str, Any]]:
+    """Fetch a queued scrape job's row (params decoded), or None."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM scrape_jobs WHERE id = %s", (job_id,))
+            row = cur.fetchone()
+            if row and isinstance(row.get("params"), (str, bytes, bytearray)):
+                try:
+                    row["params"] = json.loads(row["params"])
+                except Exception:
+                    row["params"] = {}
+            return row
+    finally:
+        conn.close()
+
+
+def claim_next_scrape() -> Optional[dict[str, Any]]:
+    """Atomically move the oldest pending scrape to 'running' and return it.
+
+    Uses ``UPDATE ... LIMIT 1`` guarded by ``status='pending'`` so two worker
+    loops never grab the same job. Returns None when the queue is empty.
+    """
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE scrape_jobs
+                SET status = 'running', started_at = CURRENT_TIMESTAMP
+                WHERE id = (
+                    SELECT id FROM (
+                        SELECT id FROM scrape_jobs WHERE status = 'pending'
+                        ORDER BY id LIMIT 1
+                    ) AS next
+                )
+                """
+            )
+            if cur.rowcount == 0:
+                conn.commit()
+                return None
+            cur.execute(
+                "SELECT * FROM scrape_jobs WHERE status = 'running' "
+                "ORDER BY started_at DESC, id DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+        conn.commit()
+        if row and isinstance(row.get("params"), (str, bytes, bytearray)):
+            try:
+                row["params"] = json.loads(row["params"])
+            except Exception:
+                row["params"] = {}
+        return row
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def finish_scrape(
+    job_id: int, search_id: Optional[int], error: Optional[str] = None
+) -> None:
+    """Mark a scrape job done (with its search_id) or errored."""
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE scrape_jobs
+                SET status = %s, search_id = %s, error = %s,
+                    finished_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                """,
+                ("error" if error else "done", search_id, error, job_id),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Saved searches + scheduled alerts
+# ---------------------------------------------------------------------------
+def create_saved_search(
+    user_id: int,
+    resume_id: int,
+    label: Optional[str],
+    params: dict[str, Any],
+    frequency: str,
+    next_run_at,
+) -> int:
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO saved_searches
+                    (user_id, resume_id, label, params, frequency, next_run_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (user_id, resume_id, (label or None) and label[:255],
+                 json.dumps(params), frequency, next_run_at),
+            )
+            sid = cur.lastrowid
+        conn.commit()
+        return sid
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def list_saved_searches(user_id: int) -> list[dict[str, Any]]:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM saved_searches WHERE user_id = %s ORDER BY id DESC",
+                (user_id,),
+            )
+            rows = cur.fetchall()
+            for row in rows:
+                if isinstance(row.get("params"), (str, bytes, bytearray)):
+                    try:
+                        row["params"] = json.loads(row["params"])
+                    except Exception:
+                        row["params"] = {}
+            return rows
+    finally:
+        conn.close()
+
+
+def delete_saved_search(user_id: int, saved_search_id: int) -> bool:
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM saved_searches WHERE id = %s AND user_id = %s",
+                (saved_search_id, user_id),
+            )
+            changed = cur.rowcount
+        conn.commit()
+        return changed > 0
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def set_saved_search_active(user_id: int, saved_search_id: int, active: bool) -> bool:
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE saved_searches SET active = %s WHERE id = %s AND user_id = %s",
+                (bool(active), saved_search_id, user_id),
+            )
+            changed = cur.rowcount
+        conn.commit()
+        return changed > 0
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def due_saved_searches(now) -> list[dict[str, Any]]:
+    """Active saved searches whose next_run_at has passed (params decoded)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM saved_searches
+                WHERE active = TRUE
+                      AND (next_run_at IS NULL OR next_run_at <= %s)
+                ORDER BY id
+                """,
+                (now,),
+            )
+            rows = cur.fetchall()
+            for row in rows:
+                if isinstance(row.get("params"), (str, bytes, bytearray)):
+                    try:
+                        row["params"] = json.loads(row["params"])
+                    except Exception:
+                        row["params"] = {}
+            return rows
+    finally:
+        conn.close()
+
+
+def get_saved_search(saved_search_id: int) -> Optional[dict[str, Any]]:
+    """Fetch one saved search (params decoded), or None."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM saved_searches WHERE id = %s", (saved_search_id,)
+            )
+            row = cur.fetchone()
+            if row and isinstance(row.get("params"), (str, bytes, bytearray)):
+                try:
+                    row["params"] = json.loads(row["params"])
+                except Exception:
+                    row["params"] = {}
+            return row
+    finally:
+        conn.close()
+
+
+def bump_saved_search_next_run(saved_search_id: int, next_run_at) -> None:
+    """Set only next_run_at (used when the scheduler enqueues a run) so the same
+    saved search isn't enqueued again before this run finishes."""
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE saved_searches SET next_run_at = %s WHERE id = %s",
+                (next_run_at, saved_search_id),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def set_saved_search_result(saved_search_id: int, search_id: Optional[int]) -> None:
+    """Record the latest completed run (last_run_at + last_search_id)."""
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE saved_searches SET last_run_at = CURRENT_TIMESTAMP, "
+                "last_search_id = %s WHERE id = %s",
+                (search_id, saved_search_id),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def mark_saved_search_ran(saved_search_id: int, search_id: Optional[int], next_run_at) -> None:
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE saved_searches
+                SET last_run_at = CURRENT_TIMESTAMP, last_search_id = %s,
+                    next_run_at = %s
+                WHERE id = %s
+                """,
+                (search_id, next_run_at, saved_search_id),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_user_email(user_id: int) -> Optional[str]:
+    """Just the email for an account (used by the alert emailer)."""
+    row = get_user_by_id(user_id)
+    return row["email"] if row else None

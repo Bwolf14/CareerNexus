@@ -7,6 +7,12 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# System packages: tesseract-ocr powers the OCR fallback for scanned/image PDFs
+# (resume_parser/extractors/ocr.py). Kept minimal; removed apt lists after.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies first so the layer is cached across code changes.
 COPY requirements.txt requirements-web.txt ./
 RUN pip install --no-cache-dir -r requirements-web.txt

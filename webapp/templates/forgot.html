@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Reset your password — Career Nexus{% endblock %}
+
+{% block content %}
+  <div class="authwrap">
+    <div class="card">
+      <h1>Forgot your password?</h1>
+      <p class="sub">Enter your email and we'll send you a link to set a new one.</p>
+
+      <form method="post" action="{{ url_for('forgot_password') }}">
+        <div class="formgrid">
+          <div>
+            <label class="field-label" for="email">Email</label>
+            <input type="email" id="email" name="email" autocomplete="email" required autofocus />
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn big" type="submit">Send reset link →</button>
+        </div>
+      </form>
+
+      <p class="authswap"><a href="{{ url_for('login') }}">← Back to log in</a></p>
+    </div>
+  </div>
+{% endblock %}
