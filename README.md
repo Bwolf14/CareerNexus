@@ -57,11 +57,14 @@ database everything is written to:
 docker compose up --build
 ```
 
-Then open <http://localhost:8000> and follow the five steps:
+Then open <http://localhost:8000>. The flow is behind a login: **register** with
+an email + password and tick the box consenting to the collection of your data
+(the account can't be created without it). Once signed in, follow the five steps:
 
 1. **Upload** — drop a PDF/DOCX resume; it's parsed with `parse_resume()` and
-   stored (full JSON in `user_resumes.parsed_data`, plus normalised rows in
-   `users`, `skills`/`user_skills`, `resume_experience`, `resume_education`).
+   stored against your account (full JSON in `user_resumes.parsed_data`, plus
+   normalised rows in `users`, `skills`/`user_skills`, `resume_experience`,
+   `resume_education`).
 2. **Your profile** (`/profile/<id>`) — review the extracted contact info,
    experience timeline, education, skills, certifications, and parser
    warnings; tweak search options (keywords, location, work type, region,
@@ -80,15 +83,22 @@ Then open <http://localhost:8000> and follow the five steps:
    **resume-improvement tips** and a **certification-demand analysis**
    ("78% of your matched jobs mention CCNA — consider earning it").
 
-Previous sessions are listed on the home page; each keeps its matches,
-questionnaire answers, and career plan. Resume/jobs JSON stay downloadable
-(`/download/<id>`, `/jobs/download/<id>`) — those two files are exactly what
-the future AI matcher consumes.
+Your previous sessions are listed on the home page (only your own — each account
+sees just its own resumes and searches); each keeps its matches, questionnaire
+answers, and career plan. The search context + postings are still written to
+`job_results/jobs_<id>.json` on the server for the future AI matcher to consume.
 
 No extra setup is required: the `db` service initialises the schema from
 [`init.sql`](init.sql) on first run, and the `web` service waits for the DB to
 become healthy before serving. Connect a client like DBeaver to
 `localhost:3306` (database `careernexus_db`) to browse the stored data.
+
+> **Upgrading an existing database:** the login/consent columns were added to
+> `users` in [`init.sql`](init.sql), but `init.sql` only runs on a *fresh* data
+> volume. If you already have a `db_data` volume from an earlier version, reset
+> it with `docker compose down -v` before `up` to pick up the new schema
+> (this wipes stored data). Registration still works without the reset — the
+> app falls back gracefully — it just won't persist the consent timestamp.
 
 > **Upgrading an existing checkout:** the schema now includes a
 > `career_plans` table. `init.sql` only runs when the DB volume is first
@@ -132,8 +142,7 @@ A search kicked off from the profile page will:
 3. store the run in **`job_searches`** and every posting in **`jobs`** (browsable
    in DBeaver, same database), and
 4. write a JSON file to `job_results/jobs_<id>.json` pairing the search context
-   with the postings — ready to hand to the AI matcher alongside the resume JSON
-   (also downloadable at `/jobs/download/<id>`).
+   with the postings — ready to hand to the AI matcher alongside the resume JSON.
 
 If JobSpy is unavailable, the network is blocked, or a search returns nothing,
 the page falls back to clearly-labelled **sample** postings so the demo still

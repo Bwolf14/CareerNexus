@@ -17,12 +17,18 @@ scraping (JobSpy), heuristic ranking, certification-demand analysis, and
 resume tips are all deterministic. AI-dependent features are clearly labelled
 placeholders in the UI.
 
-Supporting routes
------------------
-GET  /download/<resume_id>        parsed-resume JSON download
-GET  /jobs/download/<search_id>   job-search JSON download (for the AI matcher)
-GET  /api/resumes                 JSON list of stored resumes
-GET  /api/jobs/<search_id>        JSON of a stored job search
+The whole flow is gated behind a login: visitors register with an email +
+password and must consent to sensitive-data collection to create an account.
+Each account only sees its own resumes and searches.
+
+Auth + supporting routes
+------------------------
+GET/POST /register                create an account (consent required)
+GET/POST /login                   log in
+POST /logout                      log out
+POST /matches/<search_id>/retry   re-run a search that fell back to sample data
+GET  /api/resumes                 JSON list of the account's resumes (internal)
+GET  /api/jobs/<search_id>        JSON of a stored job search (internal)
 GET  /health                      liveness probe
 GET  /jobs, /jobs/<id>            legacy URLs → redirect into the new flow
 
@@ -33,7 +39,6 @@ the container (``webapp.app:app``).
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import os
 import tempfile
@@ -46,7 +51,6 @@ from flask import (
     redirect,
     render_template,
     request,
-    send_file,
     url_for,
 )
 
@@ -77,7 +81,8 @@ from job_scraper.scraper import COUNTRY_INDEED
 from resume_parser import parse_resume
 from resume_parser.exceptions import ResumeParserError
 
-from . import ai_store, db, plan_store
+from . import ai_store, auth, db, plan_store
+from .auth import current_user, login_required
 
 # Search-form option whitelists (anything else falls back to the default).
 WORK_TYPES = {"any", "remote", "local"}
@@ -96,8 +101,16 @@ MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16 MB upload cap
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
-# Only used for flash messages (no auth, nothing sensitive in the session).
+# Signs the session cookie that carries the logged-in user id and flash
+# messages. Set FLASK_SECRET_KEY in production so sessions survive restarts and
+# can't be forged; the default only exists so the demo runs out of the box.
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "careernexus-demo-flash-key")
+
+
+@app.context_processor
+def inject_current_user() -> dict:
+    """Expose the logged-in account to every template as ``current_user``."""
+    return {"current_user": current_user()}
 
 
 def _allowed(filename: str) -> bool:
@@ -208,17 +221,119 @@ def _resume_for_search(search: dict) -> tuple[dict, list[str]]:
     return parsed, notes
 
 
+def _require_owned_resume(resume_id: int) -> None:
+    """404 if the resume doesn't exist, 403 if it belongs to another account."""
+    owner = db.get_resume_owner(resume_id)
+    if owner is None:
+        abort(404, description="No parsed resume found with that id.")
+    if owner != current_user()["id"]:
+        abort(403, description="That resume belongs to another account.")
+
+
+def _require_owned_search(search_row: dict) -> None:
+    """403 if the search belongs to another account."""
+    if search_row.get("user_id") != current_user()["id"]:
+        abort(403, description="That job search belongs to another account.")
+
+
+# ---------------------------------------------------------------------------
+# Accounts — register / login / logout
+# ---------------------------------------------------------------------------
+MIN_PASSWORD_LEN = 8
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if current_user() is not None:
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip()
+        password = request.form.get("password") or ""
+        confirm = request.form.get("confirm") or ""
+        consent = bool(request.form.get("consent"))
+
+        error = None
+        if "@" not in email or "." not in email.split("@")[-1]:
+            error = "Enter a valid email address."
+        elif len(password) < MIN_PASSWORD_LEN:
+            error = f"Password must be at least {MIN_PASSWORD_LEN} characters."
+        elif password != confirm:
+            error = "The two passwords don't match."
+        elif not consent:
+            # Hard gate: no account without consent to data collection.
+            error = (
+                "You must consent to the collection of your data to create an "
+                "account and use the job search."
+            )
+
+        if error is None:
+            try:
+                user_id = db.create_user(email, auth.hash_password(password), consent)
+            except ValueError as exc:
+                error = str(exc)
+            except Exception as exc:
+                error = f"Could not create your account: {exc}"
+
+        if error is not None:
+            flash(error, "error")
+            return render_template("register.html", email=email, consent=consent), 400
+
+        auth.login_user(user_id)
+        flash("Account created — welcome to Career Nexus.", "info")
+        return redirect(url_for("index"))
+
+    return render_template("register.html", email="", consent=False)
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user() is not None:
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip()
+        password = request.form.get("password") or ""
+        try:
+            user = db.get_user_by_email(email)
+        except Exception as exc:
+            flash(f"Could not reach the account database: {exc}", "error")
+            return render_template("login.html", email=email), 503
+
+        if user and auth.verify_password(user["password_hash"], password):
+            auth.login_user(user["id"])
+            dest = request.args.get("next")
+            # Only allow local redirects (no open-redirect to other hosts).
+            if not dest or not dest.startswith("/"):
+                dest = url_for("index")
+            return redirect(dest)
+
+        flash("Incorrect email or password.", "error")
+        return render_template("login.html", email=email), 401
+
+    return render_template("login.html", email="")
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    auth.logout_user()
+    flash("You've been logged out.", "info")
+    return redirect(url_for("login"))
+
+
 # ---------------------------------------------------------------------------
 # Step 1 — home + upload
 # ---------------------------------------------------------------------------
 @app.route("/")
+@login_required
 def index():
     resumes: list = []
     searches: list = []
     db_error = None
+    uid = current_user()["id"]
     try:
-        resumes = db.list_resumes()
-        searches = db.list_job_searches()
+        resumes = db.list_resumes(user_id=uid)
+        searches = db.list_job_searches(user_id=uid)
     except Exception as exc:  # surfaced in the UI rather than 500-ing
         db_error = str(exc)
     return render_template(
@@ -227,6 +342,7 @@ def index():
 
 
 @app.route("/upload", methods=["POST"])
+@login_required
 def upload():
     file = request.files.get("resume")
     try:
@@ -252,7 +368,7 @@ def upload():
         )
 
     try:
-        resume_id = db.save_parsed_resume(parsed)
+        resume_id = db.save_parsed_resume(parsed, user_id=current_user()["id"])
     except Exception as exc:
         # Parsed fine but not stored: show the profile inline so the parse
         # isn't wasted, with the search step disabled (it needs the DB).
@@ -263,7 +379,6 @@ def upload():
             resume_id=None,
             filename=file.filename,
             db_error=str(exc),
-            pretty_json=json.dumps(parsed, indent=2, ensure_ascii=False),
             site_choices=SITE_CHOICES,
             default_sites=DEFAULT_SITES,
             default_country=_default_country(),
@@ -277,7 +392,9 @@ def upload():
 # Step 2 — profile review + search kickoff
 # ---------------------------------------------------------------------------
 @app.route("/profile/<int:resume_id>")
+@login_required
 def profile(resume_id: int):
+    _require_owned_resume(resume_id)
     parsed = db.get_resume_json(resume_id)
     if parsed is None:
         abort(404, description="No parsed resume found with that id.")
@@ -288,7 +405,6 @@ def profile(resume_id: int):
         resume_id=resume_id,
         filename=request.args.get("f"),
         db_error=None,
-        pretty_json=json.dumps(parsed, indent=2, ensure_ascii=False),
         site_choices=SITE_CHOICES,
         default_sites=DEFAULT_SITES,
         default_country=_default_country(),
@@ -296,13 +412,13 @@ def profile(resume_id: int):
     )
 
 
-@app.route("/profile/<int:resume_id>/search", methods=["POST"])
-def search(resume_id: int):
-    parsed = db.get_resume_json(resume_id)
-    if parsed is None:
-        abort(404, description="No parsed resume found with that id.")
+def _run_search(resume_id: int, parsed: dict, settings: dict):
+    """Scrape + store one search for a resume; return a Flask response.
 
-    settings = _read_job_settings(request.form)
+    Shared by the initial search and the "retry" button on a sample-data
+    fallback. Redirects to the matches page on success, or renders an inline
+    error/results page when there's nothing to search on or the DB is down.
+    """
     queries = build_queries_from_resume(
         parsed,
         location_override=settings["location"],
@@ -380,12 +496,55 @@ def search(resume_id: int):
     return redirect(url_for("matches", search_id=search_id))
 
 
+@app.route("/profile/<int:resume_id>/search", methods=["POST"])
+@login_required
+def search(resume_id: int):
+    _require_owned_resume(resume_id)
+    parsed = db.get_resume_json(resume_id)
+    if parsed is None:
+        abort(404, description="No parsed resume found with that id.")
+    settings = _read_job_settings(request.form)
+    return _run_search(resume_id, parsed, settings)
+
+
+@app.route("/matches/<int:search_id>/retry", methods=["POST"])
+@login_required
+def retry_search(search_id: int):
+    """Re-run a search that fell back to sample data, reusing its parameters.
+
+    Country and work-type aren't persisted per search, so the retry uses the
+    resume's stored search terms + location + boards with default work-type and
+    region — enough to have another go at getting live postings.
+    """
+    search_row = _load_search_or_404(search_id)
+    _require_owned_search(search_row)
+    resume_id = search_row.get("resume_id")
+    if not resume_id:
+        abort(400, description="This search isn't linked to a resume, so it can't be retried.")
+    parsed = db.get_resume_json(resume_id)
+    if parsed is None:
+        abort(404, description="The resume behind this search no longer exists.")
+
+    sites = [s for s in (search_row.get("sites_searched") or "").split(",")
+             if s in ALLOWED_SITES] or list(DEFAULT_SITES)
+    settings = {
+        "keywords": [],
+        "location": search_row.get("location"),
+        "work_type": "any",
+        "country": _default_country(),
+        "sites": sites,
+    }
+    return _run_search(resume_id, parsed, settings)
+
+
 # ---------------------------------------------------------------------------
 # Step 3 — browse the matches
 # ---------------------------------------------------------------------------
 @app.route("/matches/<int:search_id>")
+@login_required
 def matches(search_id: int):
     search_row = _load_search_or_404(search_id)
+    _require_owned_search(search_row)
     jobs = db.get_jobs_for_search(search_id)
     terms = [
         t.strip()
@@ -470,8 +629,10 @@ def _questionnaire_for(
 
 
 @app.route("/questions/<int:search_id>", methods=["GET", "POST"])
+@login_required
 def questions(search_id: int):
     search_row = _load_search_or_404(search_id)
+    _require_owned_search(search_row)
     parsed, _ = _resume_for_search(search_row)
     jobs = db.get_jobs_for_search(search_id)
 
@@ -610,8 +771,10 @@ def _attach_ai_analysis(
 
 
 @app.route("/recommendations/<int:search_id>")
+@login_required
 def recommendations(search_id: int):
     search_row = _load_search_or_404(search_id)
+    _require_owned_search(search_row)
     jobs = db.get_jobs_for_search(search_id)
     parsed, notes = _resume_for_search(search_row)
 
@@ -659,6 +822,7 @@ def recommendations(search_id: int):
 # AI settings (Ollama / any OpenAI-compatible server)
 # ---------------------------------------------------------------------------
 @app.route("/settings", methods=["GET", "POST"])
+@login_required
 def settings_page():
     if request.method == "POST":
         submitted = {
@@ -693,6 +857,7 @@ def settings_page():
 
 
 @app.route("/api/ai/test", methods=["POST"])
+@login_required
 def api_ai_test():
     """Probe an AI server (address from the request body, not saved settings).
 
@@ -707,24 +872,10 @@ def api_ai_test():
 
 
 # ---------------------------------------------------------------------------
-# Downloads + JSON APIs
+# JSON APIs (internal — no user-facing download buttons)
 # ---------------------------------------------------------------------------
-@app.route("/download/<int:resume_id>")
-def download(resume_id: int):
-    data = db.get_resume_json(resume_id)
-    if data is None:
-        abort(404, description="No parsed resume found with that id.")
-    payload = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
-    return send_file(
-        io.BytesIO(payload),
-        mimetype="application/json",
-        as_attachment=True,
-        download_name=f"resume_{resume_id}.json",
-    )
-
-
 def _job_search_payload(search_id: int):
-    """Build the downloadable JSON for a stored search, or None if not found."""
+    """Build the JSON payload for a stored search, or None if not found."""
     search_row = db.get_job_search(search_id)
     if search_row is None:
         return None
@@ -745,23 +896,10 @@ def _job_search_payload(search_id: int):
     )
 
 
-@app.route("/jobs/download/<int:search_id>")
-def jobs_download(search_id: int):
-    payload = _job_search_payload(search_id)
-    if payload is None:
-        abort(404, description="No job search found with that id.")
-    blob = json.dumps(payload, indent=2, ensure_ascii=False, default=str).encode("utf-8")
-    return send_file(
-        io.BytesIO(blob),
-        mimetype="application/json",
-        as_attachment=True,
-        download_name=f"jobs_{search_id}.json",
-    )
-
-
 @app.route("/api/resumes")
+@login_required
 def api_resumes():
-    resumes = db.list_resumes()
+    resumes = db.list_resumes(user_id=current_user()["id"])
     # upload_date is a datetime; make it JSON-serialisable.
     for r in resumes:
         if r.get("upload_date") is not None:
@@ -770,10 +908,13 @@ def api_resumes():
 
 
 @app.route("/api/jobs/<int:search_id>")
+@login_required
 def api_jobs(search_id: int):
-    payload = _job_search_payload(search_id)
-    if payload is None:
+    search_row = db.get_job_search(search_id)
+    if search_row is None:
         abort(404, description="No job search found with that id.")
+    _require_owned_search(search_row)
+    payload = _job_search_payload(search_id)
     return jsonify(payload)
 
 
@@ -799,6 +940,21 @@ def not_found(exc):
             error=getattr(exc, "description", None) or "That page doesn't exist.",
         ),
         404,
+    )
+
+
+@app.errorhandler(403)
+def forbidden(exc):
+    return (
+        render_template(
+            "error.html",
+            heading="Not your data",
+            error=getattr(exc, "description", None)
+            or "You don't have access to that.",
+            back_url=url_for("index"),
+            back_label="Back to your sessions",
+        ),
+        403,
     )
 
 

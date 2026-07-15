@@ -163,7 +163,8 @@ code { background: var(--inset); border: 1px solid var(--border-soft);
 .field-label { display: block; font-size: .82rem; color: var(--muted);
                font-weight: 700; margin-bottom: .35rem; }
 .field-label .opt { font-weight: 400; color: var(--faint); }
-input[type=text], input[type=number], select, textarea {
+input[type=text], input[type=number], input[type=email], input[type=password],
+select, textarea {
   width: 100%; background: var(--inset); border: 1px solid var(--border);
   color: var(--text); border-radius: var(--radius-sm); padding: .6rem .7rem;
   font-size: .93rem; font-family: inherit;
@@ -328,3 +329,26 @@ pre.json { background: var(--inset); border: 1px solid var(--border-soft); borde
           gap: 1rem; flex-wrap: wrap; }
 .filter-input { max-width: 320px; }
 .count-note { color: var(--muted); font-size: .88rem; }
+
+/* Auth pages (login / register) */
+.authwrap { max-width: 440px; margin: 2.5rem auto 0; }
+.authwrap h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+.authwrap .sub { margin: 0 0 1.4rem; }
+.authwrap .formgrid { margin-top: 0; }
+.authwrap .actions { margin-top: 1.3rem; }
+.authwrap .btn.big { width: 100%; }
+.authswap { margin-top: 1.2rem; font-size: .9rem; color: var(--muted); text-align: center; }
+
+/* Consent box on the register form */
+.consent { display: flex; gap: .7rem; align-items: flex-start; padding: .9rem 1rem;
+           border: 1px solid var(--border); border-radius: var(--radius-sm);
+           background: var(--inset); }
+.consent input[type=checkbox] { width: 1.15rem; height: 1.15rem; margin-top: .1rem; flex: none; accent-color: var(--accent); }
+.consent .text { font-size: .86rem; color: var(--muted); line-height: 1.45; }
+.consent .text strong { color: var(--text); }
+
+/* Logged-in identity chip + logout button in the top nav */
+.topnav .who { color: var(--muted); font-size: .88rem; }
+.logout-btn { background: none; border: none; color: var(--accent); font: inherit;
+              cursor: pointer; padding: 0; }
+.logout-btn:hover { text-decoration: underline; }

@@ -45,7 +45,14 @@
     {% if source == 'sample' %}
       <div class="banner warn">These are <strong>sample postings</strong> — no live results were
         available (network blocked, JobSpy missing, or the search returned nothing). The rest of
-        the flow works identically on sample data.</div>
+        the flow works identically on sample data.
+        {% if search_id %}
+          <form method="post" action="{{ url_for('retry_search', search_id=search_id) }}"
+                style="margin-top:.7rem;">
+            <button class="btn secondary" type="submit">↻ Retry live search</button>
+          </form>
+        {% endif %}
+      </div>
     {% endif %}
     {% if db_error %}<div class="banner warn"><strong>Database note:</strong> {{ db_error }}</div>{% endif %}
     {% if errors %}
@@ -54,10 +61,11 @@
       </div>
     {% endif %}
 
+    {% if resume_id %}
     <div class="actions">
-      {% if search_id %}<a class="btn secondary" href="/jobs/download/{{ search_id }}">Download jobs JSON</a>{% endif %}
-      {% if resume_id %}<a class="btn ghost" href="/profile/{{ resume_id }}">← Back to profile</a>{% endif %}
+      <a class="btn ghost" href="/profile/{{ resume_id }}">← Back to profile</a>
     </div>
+    {% endif %}
   </div>
 
   <div class="card">

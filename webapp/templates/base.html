@@ -16,9 +16,18 @@
         <span class="tag">demo</span>
       </a>
       <div class="links">
-        <a href="/">New session</a>
-        <a href="/#history">History</a>
-        <a href="/settings">AI settings</a>
+        {% if current_user %}
+          <a href="/">New session</a>
+          <a href="/#history">History</a>
+          <a href="/settings">AI settings</a>
+          <span class="who">{{ current_user.email }}</span>
+          <form method="post" action="{{ url_for('logout') }}" style="display:inline;">
+            <button class="logout-btn" type="submit">Log out</button>
+          </form>
+        {% else %}
+          <a href="{{ url_for('login') }}">Log in</a>
+          <a href="{{ url_for('register') }}">Sign up</a>
+        {% endif %}
       </div>
     </nav>
 

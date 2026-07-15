@@ -12,11 +12,17 @@ CREATE TABLE IF NOT EXISTS skills (
     skill_name VARCHAR(100) UNIQUE NOT NULL
 );
 
+-- Registered accounts. Sign-up requires an email + password and explicit
+-- consent to sensitive-data collection (see consent_data_collection): the app
+-- refuses to create an account without it. Older, resume-synthesised identities
+-- (pre-login) carry password_hash='imported' and consent_data_collection=FALSE.
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
+    consent_data_collection BOOLEAN NOT NULL DEFAULT FALSE,
+    consent_at TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

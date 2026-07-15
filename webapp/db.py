@@ -72,6 +72,114 @@ def wait_for_db(retries: int = 30, delay: float = 2.0) -> None:
     raise RuntimeError(f"Database never became available: {last_exc}")
 
 
+# ---------------------------------------------------------------------------
+# Accounts / authentication
+# ---------------------------------------------------------------------------
+def _unique_username(cur, base: str) -> str:
+    """A username derived from ``base`` that doesn't collide with an existing row."""
+    base = (base.strip() or "user")[:45]
+    username = base
+    for _ in range(20):
+        cur.execute("SELECT id FROM users WHERE username = %s", (username,))
+        if not cur.fetchone():
+            return username
+        username = f"{base[:40]}-{uuid.uuid4().hex[:4]}"
+    return f"user-{uuid.uuid4().hex[:8]}"
+
+
+def create_user(email: str, password_hash: str, consent: bool) -> int:
+    """Create a registered account; return its id.
+
+    Raises ``ValueError`` if the email is already registered. ``consent`` records
+    the user's agreement to sensitive-data collection (the web layer refuses to
+    call this without it). Degrades gracefully on databases whose ``users`` table
+    predates the consent columns.
+    """
+    email = (email or "").strip()[:255]
+    username_base = email.split("@")[0] if "@" in email else email
+
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE email = %s", (email,))
+            if cur.fetchone():
+                raise ValueError("That email is already registered.")
+
+            username = _unique_username(cur, username_base)
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO users
+                        (username, email, password_hash,
+                         consent_data_collection, consent_at)
+                    VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    """,
+                    (username, email, password_hash, bool(consent)),
+                )
+            except pymysql.err.OperationalError as exc:
+                # Column doesn't exist on a DB initialised before the consent
+                # columns were added — fall back to the base insert.
+                if exc.args and exc.args[0] == 1054:
+                    cur.execute(
+                        "INSERT INTO users (username, email, password_hash) "
+                        "VALUES (%s, %s, %s)",
+                        (username, email, password_hash),
+                    )
+                else:
+                    raise
+            user_id = cur.lastrowid
+        conn.commit()
+        return user_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_user_by_email(email: str) -> Optional[dict[str, Any]]:
+    """Fetch an account by email (id, username, email, password_hash), or None."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, username, email, password_hash FROM users "
+                "WHERE email = %s",
+                ((email or "").strip()[:255],),
+            )
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def get_user_by_id(user_id: int) -> Optional[dict[str, Any]]:
+    """Fetch an account by id (id, username, email), or None."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, username, email FROM users WHERE id = %s", (user_id,)
+            )
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def get_resume_owner(resume_id: int) -> Optional[int]:
+    """The user_id that owns a resume, or None if the resume doesn't exist."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT user_id FROM user_resumes WHERE id = %s", (resume_id,)
+            )
+            row = cur.fetchone()
+            return row["user_id"] if row else None
+    finally:
+        conn.close()
+
+
 def _get_or_create_user(cur, name: Optional[str], email: Optional[str]) -> int:
     """Find a user by email, or create one synthesised from the resume contact.
 
@@ -113,13 +221,15 @@ def _skill_id(cur, name: str) -> Optional[int]:
     return row["id"] if row else None
 
 
-def save_parsed_resume(parsed: dict[str, Any]) -> int:
+def save_parsed_resume(parsed: dict[str, Any], user_id: Optional[int] = None) -> int:
     """Persist a parsed resume across the relational schema; return its row id.
 
-    The complete parsed document is stored as JSON in ``user_resumes`` (the
-    canonical, lossless record). Skills and the experience/education entries are
-    additionally normalised into their own tables so the data is queryable in
-    DBeaver without parsing JSON.
+    When ``user_id`` is given (the logged-in uploader) the resume is tied to that
+    account; otherwise a placeholder identity is synthesised from the resume's
+    contact info (legacy/anonymous path). The complete parsed document is stored
+    as JSON in ``user_resumes`` (the canonical, lossless record). Skills and the
+    experience/education entries are additionally normalised into their own
+    tables so the data is queryable in DBeaver without parsing JSON.
     """
     contact = parsed.get("contact_info") or {}
     name = contact.get("name")
@@ -129,7 +239,8 @@ def save_parsed_resume(parsed: dict[str, Any]) -> int:
     try:
         conn.begin()
         with conn.cursor() as cur:
-            user_id = _get_or_create_user(cur, name, email)
+            if user_id is None:
+                user_id = _get_or_create_user(cur, name, email)
 
             cur.execute(
                 "INSERT INTO user_resumes (user_id, parsed_data) VALUES (%s, %s)",
@@ -199,21 +310,38 @@ def save_parsed_resume(parsed: dict[str, Any]) -> int:
         conn.close()
 
 
-def list_resumes(limit: int = 100) -> list[dict[str, Any]]:
-    """Return recent resumes with the uploader's name/email for the index page."""
+def list_resumes(limit: int = 100, user_id: Optional[int] = None) -> list[dict[str, Any]]:
+    """Recent resumes with the uploader's name/email for the index page.
+
+    When ``user_id`` is given, only that account's resumes are returned (each
+    signed-in user sees their own uploads, not everyone's).
+    """
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT r.id, r.upload_date, u.username, u.email
-                FROM user_resumes r
-                JOIN users u ON u.id = r.user_id
-                ORDER BY r.id DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
+            if user_id is None:
+                cur.execute(
+                    """
+                    SELECT r.id, r.upload_date, u.username, u.email
+                    FROM user_resumes r
+                    JOIN users u ON u.id = r.user_id
+                    ORDER BY r.id DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT r.id, r.upload_date, u.username, u.email
+                    FROM user_resumes r
+                    JOIN users u ON u.id = r.user_id
+                    WHERE r.user_id = %s
+                    ORDER BY r.id DESC
+                    LIMIT %s
+                    """,
+                    (user_id, limit),
+                )
             return cur.fetchall()
     finally:
         conn.close()
@@ -391,22 +519,39 @@ def get_plan_answers(search_id: int) -> Optional[dict[str, Any]]:
         conn.close()
 
 
-def list_job_searches(limit: int = 100) -> list[dict[str, Any]]:
-    """Recent scrape runs (with the uploader's name) for the jobs index page."""
+def list_job_searches(limit: int = 100, user_id: Optional[int] = None) -> list[dict[str, Any]]:
+    """Recent scrape runs (with the uploader's name) for the index page.
+
+    When ``user_id`` is given, only that account's searches are returned.
+    """
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT s.id, s.search_terms, s.location, s.sites_searched,
-                       s.source, s.results_count, s.ran_at, u.username
-                FROM job_searches s
-                LEFT JOIN users u ON u.id = s.user_id
-                ORDER BY s.id DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
+            if user_id is None:
+                cur.execute(
+                    """
+                    SELECT s.id, s.search_terms, s.location, s.sites_searched,
+                           s.source, s.results_count, s.ran_at, u.username
+                    FROM job_searches s
+                    LEFT JOIN users u ON u.id = s.user_id
+                    ORDER BY s.id DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT s.id, s.search_terms, s.location, s.sites_searched,
+                           s.source, s.results_count, s.ran_at, u.username
+                    FROM job_searches s
+                    LEFT JOIN users u ON u.id = s.user_id
+                    WHERE s.user_id = %s
+                    ORDER BY s.id DESC
+                    LIMIT %s
+                    """,
+                    (user_id, limit),
+                )
             return cur.fetchall()
     finally:
         conn.close()

@@ -226,7 +226,6 @@
 
       <div class="actions">
         <button class="btn big" id="search-submit" type="submit">Search job boards →</button>
-        <a class="btn ghost" href="/download/{{ resume_id }}">Download resume JSON</a>
         <span class="spinner" id="spinner">Scraping live job boards — this can take 10–60 seconds…</span>
       </div>
     </form>
@@ -235,11 +234,6 @@
         linked to it. Fix the database connection and re-upload.</div>
     {% endif %}
   </div>
-
-  <details class="rawjson card" style="box-shadow:none;">
-    <summary>Raw parsed JSON</summary>
-    <pre class="json">{{ pretty_json }}</pre>
-  </details>
 {% endblock %}
 
 {% block scripts %}
