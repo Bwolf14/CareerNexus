@@ -103,6 +103,12 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "8001:8001"
+    volumes:
+      # MUST share this volume with web + worker: the admin portal writes the AI
+      # settings file (job_results/ai_settings.json) here, and the web app +
+      # worker read it. Without the shared mount the web app never sees the
+      # admin's AI config and always falls back to safe mode.
+      - ./job_results:/app/job_results
     command: ["gunicorn", "--bind", "0.0.0.0:8001", "--workers", "2",
               "--threads", "4", "--timeout", "120", "webapp.admin_app:admin_app"]
     healthcheck:
