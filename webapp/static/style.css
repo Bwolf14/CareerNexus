@@ -414,3 +414,30 @@ pre.json { background: var(--inset); border: 1px solid var(--border-soft); borde
                       border-radius: 999px; overflow: hidden; }
 .pull-progress .fill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
 .pull-progress .pstat { margin-top: .3rem; font-size: .78rem; }
+
+/* ===== Non-blocking "AI thinking" bar on the plan page ===== */
+.ai-thinking-bar {
+  position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%);
+  max-width: 720px; width: calc(100% - 2rem); z-index: 50;
+  display: flex; align-items: center; gap: .7rem;
+  background: var(--ai-soft); border: 1px solid rgba(167,139,250,.5);
+  color: #ddd6fe; padding: .75rem 1.1rem; border-radius: 999px;
+  box-shadow: var(--shadow); font-size: .9rem;
+}
+.ai-thinking-bar .spin {
+  width: 16px; height: 16px; flex: none; border-radius: 50%;
+  border: 2px solid rgba(167,139,250,.4); border-top-color: var(--ai);
+  animation: spin .8s linear infinite;
+}
+.ai-analysis.pending { opacity: .7; }
+.ai-analysis.pending .dots { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
+
+/* ===== Questions: pick-3 shake + hint flash ===== */
+@keyframes shake {
+  0%,100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); } 40% { transform: translateX(5px); }
+  60% { transform: translateX(-4px); } 80% { transform: translateX(4px); }
+}
+.checks label.shake span { animation: shake .4s; border-color: var(--danger); color: var(--danger); }
+.pick-hint.flash { color: var(--danger); font-weight: 700; animation: pulse 1s ease 2; }

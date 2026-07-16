@@ -57,7 +57,9 @@ from ai_client import (
 from ai_client import catalog as catalog_mod
 from ai_client.settings import LOCAL_OLLAMA_URL, is_configured, settings_path
 
-from . import auth, db
+from . import auth, configure_logging, db
+
+configure_logging()
 
 ADMIN_SESSION_KEY = "admin_user_id"
 

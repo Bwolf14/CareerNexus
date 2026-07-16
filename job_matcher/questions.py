@@ -50,6 +50,7 @@ def _q(
     options: Optional[list[str]] = None,
     hint: Optional[str] = None,
     origin: str = "standard",
+    max_select: Optional[int] = None,
 ) -> dict[str, Any]:
     return {
         "id": qid,
@@ -58,6 +59,9 @@ def _q(
         "options": options or [],
         "hint": hint,
         "origin": origin,
+        # For multichoice: the maximum number of options the user may pick
+        # (None = unlimited). Enforced in the browser + on the server.
+        "max_select": max_select,
     }
 
 
@@ -135,8 +139,9 @@ def _skills_question(parsed: dict[str, Any]) -> Optional[dict[str, Any]]:
         "Which of these skills do you most want to use day-to-day?",
         "multichoice",
         options=skills[:8],
-        hint="Pick any number — jobs that use them will rank higher.",
+        hint="Pick up to three — jobs that use them will rank higher.",
         origin="resume",
+        max_select=3,
     )
 
 
@@ -165,6 +170,7 @@ def _priorities_question() -> dict[str, Any]:
         "multichoice",
         options=PRIORITY_OPTIONS,
         hint="Pick up to three.",
+        max_select=3,
     )
 
 
