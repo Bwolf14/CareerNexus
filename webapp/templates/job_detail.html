@@ -109,19 +109,42 @@
     // 1) Non-AI (Wikipedia) first — fast, reliable when available.
     // |safe: the query is server-built (ints + hex); without it Jinja escapes
     // the & to &amp; inside this script block and the key param is lost.
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = s == null ? '' : String(s);
+      return d.innerHTML;
+    }
     try {
       const resp = await fetch('/api/company-info?part=basic&{{ info_query|safe }}');
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
-      if (data.wiki && data.wiki.extract) {
+      const p = data.profile;
+      if (p && (p.extract || (p.facts && Object.keys(p.facts).length))) {
         let html = '';
-        if (data.wiki.description) {
-          html += '<p class="jobmeta" style="margin:0 0 .35rem;">' + data.wiki.description + '</p>';
+        if (p.description) {
+          html += '<p class="jobmeta" style="margin:0 0 .5rem;">' + esc(p.description) + '</p>';
         }
-        html += '<p style="margin:0;">' + data.wiki.extract + '</p>';
-        if (data.wiki.url) {
-          html += '<p class="hint" style="margin-top:.4rem;">Source: <a href="' + data.wiki.url +
-                  '" target="_blank" rel="noopener">Wikipedia</a></p>';
+        const factLabels = {industry: 'Industry', headquarters: 'Headquarters',
+                            founded: 'Founded', employees: 'Employees',
+                            revenue: 'Annual revenue', website: 'Website'};
+        const facts = p.facts || {};
+        const rows = Object.keys(factLabels).filter(k => facts[k]);
+        if (rows.length) {
+          html += '<div class="fact-grid">';
+          rows.forEach(k => {
+            const v = k === 'website'
+              ? '<a href="' + esc(facts[k]) + '" target="_blank" rel="noopener">' +
+                esc(facts[k].replace(/^https?:\/\//, '').replace(/\/$/, '')) + '</a>'
+              : esc(facts[k]);
+            html += '<div class="fact"><span class="fact-label">' + factLabels[k] +
+                    '</span><span class="fact-value">' + v + '</span></div>';
+          });
+          html += '</div>';
+        }
+        if (p.extract) html += '<p style="margin:.8rem 0 0;">' + esc(p.extract) + '</p>';
+        if (p.url) {
+          html += '<p class="hint" style="margin-top:.4rem;">Source: <a href="' + esc(p.url) +
+                  '" target="_blank" rel="noopener">Wikipedia</a> / Wikidata</p>';
         }
         basic.innerHTML = html;
       } else {
@@ -129,7 +152,7 @@
           '(smaller and local employers often don\'t have one).</p>';
       }
     } catch (err) {
-      basic.innerHTML = '<p class="empty">Company lookup failed: ' + err + '</p>';
+      basic.innerHTML = '<p class="empty">Company lookup failed: ' + esc(err) + '</p>';
     }
 
     // 2) AI overview (grounded in the collected data) — slow, shown when ready.

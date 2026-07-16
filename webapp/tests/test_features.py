@@ -378,16 +378,20 @@ def test_tracker_job_detail_renders(client, monkeypatch):
     assert b"saved_id=4" in resp.data     # async info uses the saved context
 
 
-def test_company_info_basic_uses_wikipedia(client, monkeypatch):
+def test_company_info_basic_returns_profile(client, monkeypatch):
     monkeypatch.setattr(
-        app_module.company_info, "wikipedia_summary",
-        lambda company: {"title": company, "description": "Software company",
-                         "extract": "Northwind makes software.", "url": "https://w"},
+        app_module.company_info, "company_profile",
+        lambda company: {"source": "wikidata", "qid": "Q1", "name": company,
+                         "description": "Software company",
+                         "extract": "Northwind makes software.", "url": "https://w",
+                         "facts": {"employees": "12,000 (2024)",
+                                   "revenue": "3.2 billion Canadian dollar (2024)"}},
     )
     resp = client.get("/api/company-info?part=basic&search_id=7&key=" + _job_key())
     data = json.loads(resp.data)
     assert data["company"] == "Northwind"
-    assert data["wiki"]["extract"].startswith("Northwind makes")
+    assert data["profile"]["extract"].startswith("Northwind makes")
+    assert data["profile"]["facts"]["employees"].startswith("12,000")
 
 
 def test_company_info_ai_safe_mode(client, monkeypatch):
@@ -423,21 +427,82 @@ def test_resume_preview_fragment(client):
     assert resp.status_code == 404
 
 
-def test_wikipedia_summary_rejects_non_org(monkeypatch, tmp_path):
+def test_company_profile_resolves_aliases_like_rbc(monkeypatch, tmp_path):
+    """"RBC" must resolve to Royal Bank of Canada via Wikidata alias search."""
     from webapp import company_info as ci
     monkeypatch.setenv("JOB_RESULTS_DIR", str(tmp_path))
 
-    # Page found, but it's clearly not a company -> rejected (None cached).
-    monkeypatch.setattr(ci, "_fetch_summary",
-                        lambda title: {"title": "Apple", "description": "Fruit",
-                                       "extract": "The apple is a round fruit."})
-    assert ci.wikipedia_summary("Apple") is None
+    # Wikidata search puts an obscure same-alias org FIRST (this happens for
+    # real: "RBC" → Rwanda Biomedical Center). Prominence ranking must still
+    # pick the bank.
+    monkeypatch.setattr(ci, "_wd_search", lambda name: [
+        {"id": "Q30296401", "label": "Rwanda Biomedical Center",
+         "description": "healthcare organization in Kigali, Rwanda"},
+        {"id": "Q106", "label": "red blood cell", "description": "type of blood cell"},
+        {"id": "Q735261", "label": "Royal Bank of Canada",
+         "description": "Canadian multinational banking and financial services company"},
+    ])
+    bank_entity = {
+        "id": "Q735261",
+        "labels": {"en": {"value": "Royal Bank of Canada"}},
+        "descriptions": {"en": {"value": "Canadian multinational banking company"}},
+        "sitelinks": {f"wiki{i}": {"title": "Royal Bank of Canada"} for i in range(30)}
+        | {"enwiki": {"title": "Royal Bank of Canada"}},
+        "claims": {
+            "P1128": [{"rank": "normal",
+                       "mainsnak": {"datavalue": {"value": {"amount": "+94624", "unit": "1"}}},
+                       "qualifiers": {"P585": [{"datavalue": {"value": {"time": "+2024-00-00T00:00:00Z"}}}]}}],
+            "P2139": [{"rank": "preferred",
+                       "mainsnak": {"datavalue": {"value": {"amount": "+56100000000",
+                                    "unit": "http://www.wikidata.org/entity/Q1104069"}}},
+                       "qualifiers": {"P585": [{"datavalue": {"value": {"time": "+2024-00-00T00:00:00Z"}}}]}}],
+            "P571": [{"rank": "normal",
+                      "mainsnak": {"datavalue": {"value": {"time": "+1864-00-00T00:00:00Z"}}}}],
+            "P856": [{"rank": "normal", "mainsnak": {"datavalue": {"value": "https://www.rbc.com"}}}],
+            "P452": [{"rank": "normal", "mainsnak": {"datavalue": {"value": {"id": "Q806718"}}}}],
+            "P159": [{"rank": "normal", "mainsnak": {"datavalue": {"value": {"id": "Q172"}}}}],
+        },
+    }
+    rwanda_entity = {
+        "id": "Q30296401",
+        "labels": {"en": {"value": "Rwanda Biomedical Center"}},
+        "descriptions": {"en": {"value": "healthcare organization in Kigali, Rwanda"}},
+        "sitelinks": {"enwiki": {"title": "Rwanda Biomedical Centre"}},
+        "claims": {},
+    }
+    monkeypatch.setattr(ci, "_wd_entities",
+                        lambda qids: {"Q735261": bank_entity, "Q30296401": rwanda_entity})
+    monkeypatch.setattr(ci, "_wd_labels", lambda qids: {
+        "Q806718": "banking industry", "Q172": "Toronto", "Q1104069": "Canadian dollar",
+    })
+    monkeypatch.setattr(ci, "_fetch_summary", lambda title: {
+        "title": title, "description": "Canadian bank",
+        "extract": "The Royal Bank of Canada is a Canadian multinational…",
+        "url": "https://en.wikipedia.org/wiki/Royal_Bank_of_Canada",
+    })
 
-    # Org-looking page accepted (fresh name to dodge the cache).
-    monkeypatch.setattr(ci, "_fetch_summary",
-                        lambda title: {"title": "Acme", "description": "Software company",
-                                       "extract": "Acme is a software company."})
-    assert ci.wikipedia_summary("Acme Corp")["title"] == "Acme"
+    profile = ci.company_profile("RBC")
+    assert profile["name"] == "Royal Bank of Canada"
+    assert profile["facts"]["employees"] == "94,624 (2024)"
+    assert profile["facts"]["revenue"] == "56.1 billion Canadian dollar (2024)"
+    assert profile["facts"]["founded"] == "1864"
+    assert profile["facts"]["headquarters"] == "Toronto"
+    assert profile["facts"]["website"] == "https://www.rbc.com"
+    assert profile["extract"].startswith("The Royal Bank")
+
+    # Cached: a second call must not hit the (now broken) network fns.
+    monkeypatch.setattr(ci, "_wd_search", lambda name: pytest.fail("cache miss"))
+    assert ci.company_profile("RBC")["name"] == "Royal Bank of Canada"
+
+
+def test_company_profile_rejects_non_org(monkeypatch, tmp_path):
+    from webapp import company_info as ci
+    monkeypatch.setenv("JOB_RESULTS_DIR", str(tmp_path))
+    # Only non-org candidates -> no profile (and the negative is cached).
+    monkeypatch.setattr(ci, "_wd_search", lambda name: [
+        {"id": "Q89", "label": "apple", "description": "fruit of the apple tree"},
+    ])
+    assert ci.company_profile("Apple Orchard Fresh") is None
 
 
 # ---------------------------------------------------------------------------

@@ -1183,8 +1183,8 @@ def api_company_info():
 
     part = request.args.get("part", "basic")
     if part == "basic":
-        wiki = company_info.wikipedia_summary(company)
-        return jsonify({"company": company, "wiki": wiki})
+        profile = company_info.company_profile(company)
+        return jsonify({"company": company, "profile": profile})
 
     # part=ai — grounded overview, cached per company + model.
     ai_settings = load_settings()
@@ -1197,12 +1197,18 @@ def api_company_info():
     if model in ai_by_model:
         return jsonify({"company": company, "ai": ai_by_model[model], "model": model})
 
-    wiki = cached.get("wiki") or company_info.wikipedia_summary(company)
+    profile = cached.get("profile") or company_info.company_profile(company)
+    grounding = None
+    if profile:
+        bits = [profile.get("extract") or ""]
+        if profile.get("facts"):
+            bits.append("Structured facts: " + json.dumps(profile["facts"]))
+        grounding = "\n".join(b for b in bits if b) or None
     try:
         text = generate_company_overview(
             ai_settings, company,
             posting_text=job.get("description"),
-            wiki_extract=(wiki or {}).get("extract") if wiki else None,
+            wiki_extract=grounding,
         )
     except AIClientError as exc:
         return jsonify({"company": company, "ai": None, "error": str(exc)})
