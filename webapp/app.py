@@ -63,6 +63,7 @@ from ai_client import (
     load_settings,
 )
 from ai_client.settings import is_configured
+from ai_client.tiered import configured_model
 from job_matcher import (
     analyze_certifications,
     build_questions,
@@ -76,8 +77,18 @@ from job_scraper.scraper import COUNTRY_INDEED
 from resume_parser import parse_resume
 from resume_parser.exceptions import ResumeParserError
 
-from . import ai_store, auth, db, email_utils, plan_store, search_service
+from . import (
+    ai_store,
+    auth,
+    configure_logging,
+    db,
+    email_utils,
+    plan_store,
+    search_service,
+)
 from .auth import current_user, login_required
+
+configure_logging()
 
 # Search-form option whitelists (anything else falls back to the default).
 WORK_TYPES = {"any", "remote", "local"}
@@ -745,7 +756,7 @@ def _questionnaire_for(
     ai_settings = load_settings()
     ai_status = {
         "configured": is_configured(ai_settings),
-        "model": ai_settings.get("model"),
+        "model": configured_model(ai_settings),
         "generator": "template",
         "error": None,
     }
@@ -774,7 +785,7 @@ def _questionnaire_for(
             search_id,
             {
                 "generator": ai_status["generator"],
-                "model": ai_settings.get("model")
+                "model": configured_model(ai_settings)
                 if ai_status["generator"] == "ai"
                 else None,
                 "questions": question_list,
@@ -830,6 +841,9 @@ def _collect_answers(question_list: list[dict], form) -> dict:
         qid = q["id"]
         if q["type"] == "multichoice":
             values = [v for v in form.getlist(qid) if v]
+            max_select = q.get("max_select")
+            if max_select:
+                values = values[:max_select]  # enforce the pick limit server-side too
             if values:
                 answers[qid] = values
         elif q["type"] == "salary":
@@ -860,25 +874,7 @@ def _format_answer(question: dict, answer) -> str:
     return str(answer)
 
 
-def _attach_ai_analysis(
-    search_id: int, parsed: dict, picks: list[dict], answers: dict | None
-) -> tuple[str | None, dict]:
-    """Fill ``pick["ai_analysis"]`` on each pick; return (overall, ai_status).
-
-    Results are cached per search, keyed by a hash of the answers and the
-    shortlist, so revisits are instant but a changed questionnaire or a
-    re-ranked list triggers a fresh generation.
-    """
-    ai_settings = load_settings()
-    ai_status = {
-        "configured": is_configured(ai_settings),
-        "model": ai_settings.get("model"),
-        "used": False,
-        "error": None,
-    }
-    if not ai_status["configured"] or not picks:
-        return None, ai_status
-
+def _analysis_cache_key(picks: list[dict], answers: dict | None, model: str | None) -> str:
     basis = json.dumps(
         {
             "answers": answers or {},
@@ -887,44 +883,63 @@ def _attach_ai_analysis(
                  (p.get("job") or {}).get("external_id")]
                 for p in picks
             ],
-            "model": ai_settings.get("model"),
+            "model": model,
         },
         sort_keys=True,
         default=str,
     )
-    cache_key = hashlib.sha1(basis.encode("utf-8")).hexdigest()
+    return hashlib.sha1(basis.encode("utf-8")).hexdigest()
 
-    analysis = None
-    if request.args.get("regen") != "1":
-        cached = ai_store.load("analysis", search_id)
-        if cached and cached.get("key") == cache_key:
-            analysis = cached
 
-    if analysis is None:
-        try:
-            result = generate_match_analysis(ai_settings, parsed, picks, answers)
-            analysis = {
-                "key": cache_key,
-                "model": ai_settings.get("model"),
-                "overall": result["overall"],
-                # JSON object keys are strings; store them that way from the start.
-                "per_index": {str(i): text for i, text in result["per_index"].items()},
-            }
-            try:
-                ai_store.save("analysis", search_id, analysis)
-            except Exception:
-                pass
-        except AIClientError as exc:
-            ai_status["error"] = str(exc)
-            return None, ai_status
+def _load_cached_analysis(search_id: int, cache_key: str) -> dict | None:
+    cached = ai_store.load("analysis", search_id)
+    if cached and cached.get("key") == cache_key:
+        return cached
+    return None
 
-    ai_status["used"] = True
-    if analysis.get("model"):
-        ai_status["model"] = analysis["model"]
-    per_index = analysis.get("per_index") or {}
-    for i, pick in enumerate(picks):
-        pick["ai_analysis"] = per_index.get(str(i))
-    return analysis.get("overall"), ai_status
+
+def _run_analysis(
+    search_id: int, parsed: dict, picks: list[dict], answers: dict | None,
+    *, regen: bool = False,
+) -> dict:
+    """Compute (or load cached) AI match analysis. Blocking — called by the
+    async endpoint so the page itself renders instantly.
+
+    Returns a JSON-friendly dict: ``{ready, used, safe_mode, overall,
+    per_index (str→text), model, error}``.
+    """
+    ai_settings = load_settings()
+    model = configured_model(ai_settings)
+    base = {"ready": True, "used": False, "safe_mode": True,
+            "overall": None, "per_index": {}, "model": model, "error": None}
+    if not is_configured(ai_settings) or not picks:
+        return base
+
+    cache_key = _analysis_cache_key(picks, answers, model)
+    if not regen:
+        cached = _load_cached_analysis(search_id, cache_key)
+        if cached:
+            return {"ready": True, "used": True, "safe_mode": False,
+                    "overall": cached.get("overall"),
+                    "per_index": cached.get("per_index") or {},
+                    "model": cached.get("model") or model, "error": None}
+
+    try:
+        result = generate_match_analysis(ai_settings, parsed, picks, answers)
+    except AIClientError as exc:
+        return {**base, "error": str(exc)}
+
+    analysis = {
+        "key": cache_key, "model": model, "overall": result["overall"],
+        "per_index": {str(i): text for i, text in result["per_index"].items()},
+    }
+    try:
+        ai_store.save("analysis", search_id, analysis)
+    except Exception:
+        pass
+    return {"ready": True, "used": True, "safe_mode": False,
+            "overall": analysis["overall"], "per_index": analysis["per_index"],
+            "model": model, "error": None}
 
 
 @app.route("/recommendations/<int:search_id>")
@@ -942,7 +957,29 @@ def recommendations(search_id: int):
     certs = analyze_certifications(parsed, jobs)
     tips = build_resume_tips(parsed, cert_analysis=certs) if parsed else []
 
-    overall_analysis, ai_status = _attach_ai_analysis(search_id, parsed, picks, answers)
+    # AI analysis runs asynchronously (see /recommendations/<id>/ai) so the page
+    # loads immediately with the deterministic shortlist. If a cached analysis
+    # already exists we attach it inline and skip the "thinking" banner.
+    ai_settings = load_settings()
+    ai_configured = is_configured(ai_settings)
+    model = configured_model(ai_settings)
+    ai_status = {"configured": ai_configured, "model": model, "used": False, "error": None}
+    overall_analysis = None
+    regen = request.args.get("regen") == "1"
+    ai_pending = False
+    if ai_configured and picks:
+        cached = None if regen else _load_cached_analysis(
+            search_id, _analysis_cache_key(picks, answers, model)
+        )
+        if cached:
+            overall_analysis = cached.get("overall")
+            per_index = cached.get("per_index") or {}
+            for i, pick in enumerate(picks):
+                pick["ai_analysis"] = per_index.get(str(i))
+            ai_status["used"] = True
+            ai_status["model"] = cached.get("model") or model
+        else:
+            ai_pending = True
 
     answers_display = []
     if answers:
@@ -971,8 +1008,31 @@ def recommendations(search_id: int):
         notes=notes,
         ai_status=ai_status,
         overall_analysis=overall_analysis,
+        ai_pending=ai_pending,
+        ai_regen=regen,
         **_step_urls(resume_id=search_row.get("resume_id"), search_id=search_id),
     )
+
+
+@app.route("/recommendations/<int:search_id>/ai")
+@login_required
+def recommendations_ai(search_id: int):
+    """Compute the AI analysis for a search and return it as JSON.
+
+    Fetched by the recommendations page so the model runs in the background
+    (the page is already showing the deterministic shortlist + a banner).
+    """
+    search_row = _load_search_or_404(search_id)
+    _require_owned_search(search_row)
+    jobs = dedupe_cross_board(db.get_jobs_for_search(search_id))
+    parsed, _ = _resume_for_search(search_row)
+    answers = plan_store.load_answers(search_id)
+    picks = score_jobs(parsed, jobs, answers or {})
+    result = _run_analysis(
+        search_id, parsed, picks, answers,
+        regen=request.args.get("regen") == "1",
+    )
+    return jsonify(result)
 
 
 # ---------------------------------------------------------------------------
@@ -1136,7 +1196,7 @@ def tailor(search_id: int, dedup_key: str):
 
     ai_settings = load_settings()
     ai_status = {"configured": is_configured(ai_settings),
-                 "model": ai_settings.get("model"), "used": False, "error": None}
+                 "model": configured_model(ai_settings), "used": False, "error": None}
     tailoring = None
     if ai_status["configured"]:
         try:

@@ -21,11 +21,13 @@ exposing the portal anywhere untrusted, and keep the port firewalled.
 
 from __future__ import annotations
 
+import json
 import os
 from functools import wraps
 
 from flask import (
     Flask,
+    Response,
     abort,
     flash,
     g,
@@ -34,19 +36,30 @@ from flask import (
     render_template,
     request,
     session,
+    stream_with_context,
     url_for,
 )
 
 from ai_client import (
+    CATALOG,
+    OPTION_SPECS,
+    SLOTS,
+    AIClientError,
+    chat,
+    list_models,
     load_settings,
     normalize_base_url,
+    pull_model,
+    resources,
     save_settings,
     test_connection,
 )
-from ai_client.settings import is_configured, settings_path
-from job_scraper.output import results_dir  # noqa: F401  (ensures dir helper import path)
+from ai_client import catalog as catalog_mod
+from ai_client.settings import LOCAL_OLLAMA_URL, is_configured, settings_path
 
-from . import auth, db
+from . import auth, configure_logging, db
+
+configure_logging()
 
 ADMIN_SESSION_KEY = "admin_user_id"
 
@@ -230,7 +243,7 @@ def set_admin(user_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Settings (AI + email)
+# Settings (tiered AI models + email)
 # ---------------------------------------------------------------------------
 @admin_app.route("/settings", methods=["GET", "POST"])
 @admin_required
@@ -248,32 +261,62 @@ def settings():
         email_settings = {k: (db.get_app_setting(k) or "") for k in EMAIL_KEYS}
     except Exception:
         email_settings = {k: "" for k in EMAIL_KEYS}
-    # Defaults for display when unset.
     email_settings.setdefault("app_base_url", "")
+
+    # Local catalog: annotate with detected RAM fit + which are installed.
+    res = resources()
+    installed = set(list_models(LOCAL_OLLAMA_URL))
+    catalog = []
+    for entry in CATALOG:
+        catalog.append({
+            **entry,
+            "installed": entry["model"] in installed
+            or entry["model"].split(":")[0] in {m.split(":")[0] for m in installed},
+            "fits": catalog_mod.fits(entry["model"], res.get("ram_available_gb")),
+        })
+
     return render_template(
         "admin_settings.html",
         ai=load_settings(),
+        slots=SLOTS,
+        option_specs=OPTION_SPECS,
         settings_file=settings_path(),
         email=email_settings,
         env_smtp_host=os.environ.get("SMTP_HOST", ""),
+        catalog=catalog,
+        res=res,
+        local_url=LOCAL_OLLAMA_URL,
     )
 
 
 def _save_ai_settings():
-    submitted = {
-        "enabled": bool(request.form.get("enabled")),
-        "base_url": (request.form.get("base_url") or "").strip(),
-        "model": (request.form.get("model") or "").strip(),
-        "connect_timeout": request.form.get("connect_timeout") or 4,
-        "read_timeout": request.form.get("read_timeout") or 180,
-    }
-    if submitted["enabled"] and not normalize_base_url(submitted["base_url"]):
-        flash("Enter the AI server address before enabling AI features.", "error")
-    elif submitted["enabled"] and not submitted["model"]:
-        flash("Pick a model before enabling AI — use Test connection to list them.", "error")
-    else:
-        save_settings(submitted)
-        flash("AI settings saved.", "info")
+    config = load_settings()  # keep current timeouts
+    slots, options = {}, {}
+    for name in SLOTS:
+        slots[name] = {
+            "enabled": bool(request.form.get(f"slot_{name}_enabled")),
+            "base_url": (request.form.get(f"slot_{name}_base_url") or "").strip(),
+            "model": (request.form.get(f"slot_{name}_model") or "").strip(),
+            "use_local": bool(request.form.get(f"slot_{name}_use_local")),
+        }
+        opt = {}
+        for spec in OPTION_SPECS:
+            key = spec["key"]
+            entry = {"on": bool(request.form.get(f"opt_{name}_{key}_on"))}
+            if spec["kind"] == "value":
+                entry["value"] = request.form.get(
+                    f"opt_{name}_{key}_value", spec["default_value"]
+                )
+            opt[key] = entry
+        options[name] = opt
+
+    save_settings({
+        "slots": slots,
+        "options": options,
+        "connect_timeout": config.get("connect_timeout", 4),
+        "read_timeout": config.get("read_timeout", 180),
+    })
+    flash("AI model settings saved.", "info")
     return redirect(url_for("settings"))
 
 
@@ -282,7 +325,6 @@ def _save_email_settings():
     for key in EMAIL_KEYS:
         raw = (request.form.get(key) or "").strip()
         values[key] = raw or None  # empty clears the override (falls back to env)
-    # Checkbox: store "0" when unticked so it overrides an env default of on.
     values["smtp_use_tls"] = "1" if request.form.get("smtp_use_tls") else "0"
     try:
         db.set_app_settings(values)
@@ -295,11 +337,64 @@ def _save_email_settings():
 @admin_app.route("/api/ai/test", methods=["POST"])
 @admin_required
 def api_ai_test():
+    """Probe an Ollama server (or the local engine) and list its models."""
     data = request.get_json(silent=True) or {}
-    base = normalize_base_url(data.get("base_url") or "")
-    result = test_connection({"base_url": base, "connect_timeout": 4.0})
+    if data.get("local"):
+        base = LOCAL_OLLAMA_URL
+    else:
+        base = normalize_base_url(data.get("base_url") or "")
+    result = test_connection(base)
     result["normalized_url"] = base
     return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Local model management (the bundled Ollama engine)
+# ---------------------------------------------------------------------------
+@admin_app.route("/api/models/installed")
+@admin_required
+def models_installed():
+    return jsonify({"models": list_models(LOCAL_OLLAMA_URL)})
+
+
+@admin_app.route("/api/models/pull", methods=["POST"])
+@admin_required
+def models_pull():
+    """Stream an Ollama model download as NDJSON (status/total/completed lines)."""
+    data = request.get_json(silent=True) or {}
+    model = (data.get("model") or "").strip()
+    if not model:
+        return jsonify({"error": "No model specified."}), 400
+
+    @stream_with_context
+    def generate():
+        try:
+            for chunk in pull_model(LOCAL_OLLAMA_URL, model):
+                yield json.dumps(chunk) + "\n"
+        except AIClientError as exc:
+            yield json.dumps({"error": str(exc)}) + "\n"
+
+    return Response(generate(), mimetype="application/x-ndjson")
+
+
+@admin_app.route("/api/models/load", methods=["POST"])
+@admin_required
+def models_load():
+    """Warm a local model into memory (a tiny request with a long keep-alive)."""
+    data = request.get_json(silent=True) or {}
+    model = (data.get("model") or "").strip()
+    if not model:
+        return jsonify({"ok": False, "error": "No model specified."}), 400
+    try:
+        chat(
+            LOCAL_OLLAMA_URL, model,
+            [{"role": "user", "content": "ok"}],
+            think=False, keep_alive="30m",
+            options={"num_predict": 1}, read_timeout=600.0,
+        )
+        return jsonify({"ok": True})
+    except AIClientError as exc:
+        return jsonify({"ok": False, "error": str(exc)})
 
 
 @admin_app.route("/health")

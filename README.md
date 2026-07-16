@@ -106,10 +106,25 @@ become healthy before serving. Connect a client like DBeaver to
 
 | Service  | Image / build  | Port  | Notes                                      |
 | -------- | -------------- | ----- | ------------------------------------------ |
-| `web`    | `./Dockerfile` | 8000  | Flask + gunicorn guided flow (healthcheck on `/health`) |
-| `admin`  | `./Dockerfile` | 8001  | separate admin portal (login, users, settings) |
-| `worker` | `./Dockerfile` | —     | background scrape queue + scheduled job alerts |
-| `db`     | `mariadb:10.6` | 3306  | schema from `init.sql`, data in a volume   |
+| `web`    | `./Dockerfile`        | 8000  | Flask + gunicorn guided flow (healthcheck on `/health`) |
+| `admin`  | `./Dockerfile`        | 8001  | separate admin portal (login, users, AI/email settings) |
+| `worker` | `./Dockerfile`        | —     | background scrape queue + scheduled job alerts |
+| `ollama` | `ollama/ollama:latest`| —     | bundled local model engine (CPU); models in a volume |
+| `db`     | `mariadb:10.6`        | 3306  | schema from `init.sql`, data in a volume   |
+
+### Watching logs (real time, over SSH)
+
+All services log to stdout, so from an SSH session on the host:
+
+```bash
+cd ~/CareerNexusFork
+docker compose logs -f                 # everything, live
+docker compose logs -f web admin worker   # just the app services
+docker compose logs -f worker          # scrape queue + job alerts only
+```
+
+`LOG_LEVEL=DEBUG` (env) turns up verbosity. The worker prints each scrape/alert
+it runs; the web/admin apps print AI slot selection, email sends, and errors.
 
 Running the web app outside Docker (for development):
 
@@ -250,37 +265,63 @@ integrated:
 When the AI step lands, it replaces the *content* of these outputs (reasons,
 question wording, tips) — the plumbing and UI stay as-is.
 
-## AI integration (optional, self-hosted)
+## AI integration (optional, self-hosted, tiered)
 
-Point Career Nexus at an **Ollama** server — typically a GPU box elsewhere on
-the LAN — and two features switch from deterministic to model-generated:
+Career Nexus talks to **Ollama** models via Ollama's native API. Three features
+switch from deterministic to model-generated when a model is available: the
+**follow-up questionnaire**, the **career-plan narrative analysis**, and the
+per-posting **resume tailoring**. All of it is configured from the **admin
+portal** (port 8001) — nothing AI-related is exposed to normal users.
 
-- the **follow-up questionnaire** is written by the model after reading the
-  resume *and* the matched postings (the structured pay/work-style/skills
-  questions that feed the ranking are always kept), and
-- the **career plan** gains per-job narrative analysis plus an overall
-  market summary, layered on top of the heuristic match signals.
+**Tiered model slots.** You configure up to three slots — **primary →
+secondary → tertiary**. Before *every* prompt the app connectivity-tests the
+slots in order and uses the first that answers (with its model installed). If
+none are enabled or reachable, it runs in **safe mode**: template questions,
+heuristic-only ranking, deterministic tailoring — exactly as with no AI.
 
-Setup is done from the UI: **AI settings** (`/settings`) takes the server
-address, has a *Test connection* button that lists the models installed on
-the server, and saves to `job_results/ai_settings.json`. Environment
-variables provide boot-time defaults:
+**Per-model options matrix.** Each slot has a matrix of options you toggle in
+the admin UI (click the cell where a setting meets a model). Value settings
+reveal a box. Every row explains itself and gives a recommendation:
 
-| Env var              | Example                       | Purpose                          |
-| -------------------- | ----------------------------- | -------------------------------- |
-| `AI_ENABLED`         | `1`                           | Turn the AI features on at boot  |
-| `AI_BASE_URL`        | `http://192.168.1.50:11434`   | The Ollama/LM Studio/vLLM server |
-| `AI_MODEL`           | `qwen3:32b`                   | Model tag (`ollama list`)        |
-| `AI_CONNECT_TIMEOUT` | `4`                           | Seconds to detect a dead server  |
-| `AI_READ_TIMEOUT`    | `180`                         | Seconds to wait for a generation |
+| Setting | Effect |
+| ------- | ------ |
+| Thinking | **OFF by default** — sends `"think": false` so reasoning models answer directly (faster, cleaner JSON). |
+| Temperature | Sampling randomness (default on at 0 for consistent output). |
+| Keep model loaded | `keep_alive` — hold the model in RAM N minutes to avoid reload latency. |
+| Max response tokens | `num_predict` — cap the reply length. |
+| Context window | `num_ctx` — how much text the model reads at once (more RAM). |
+| Top-p / Top-k / Seed / Stop | Advanced sampling controls. |
 
-The app speaks the OpenAI-compatible chat API, so anything exposing
-`/v1/chat/completions` works (Ollama, LM Studio, vLLM, cloud endpoints).
-Failures degrade gracefully: an unreachable or misbehaving server falls back
-to template questions and heuristic-only ranking, with the reason shown in
-the UI. Generated questionnaires are cached per search so answers always map
-to the questions the user actually saw; analyses are cached and regenerate
-when the answers or shortlist change (or via the *Regenerate* links).
+These map straight into the Ollama request (`think`, `keep_alive`, `options`).
+
+**Local models.** The stack bundles an **`ollama`** container so models can run
+on the server itself. In the admin portal's Local models section you can browse
+a CPU-tuned catalog (with RAM/storage/performance notes), see detected host RAM
+(and a warning if a model is too big), **download** a model with a live progress
+bar (percent + speed), and **load** it into memory. Tick “Use bundled local
+model” on one slot to route it to the local engine. A networked Ollama box
+(e.g. a GPU PC on the LAN) still works too — each slot has its own address and a
+*Test* button that lists that server's models.
+
+Environment variables seed the **primary** slot at boot (everything else is set
+in the admin portal):
+
+| Env var            | Example                       | Purpose                              |
+| ------------------ | ----------------------------- | ------------------------------------ |
+| `AI_ENABLED`       | `1`                           | Enable the primary slot at boot      |
+| `AI_BASE_URL`      | `http://192.168.1.50:11434`   | A networked Ollama server            |
+| `AI_MODEL`         | `qwen2.5:3b`                  | Model tag (`ollama list`)            |
+| `OLLAMA_LOCAL_URL` | `http://ollama:11434`         | The bundled local Ollama service     |
+
+Questionnaires are cached per search (so answers map to the questions shown);
+career-plan analyses are cached and regenerate when answers/shortlist change.
+The plan page loads instantly with the heuristic shortlist and an **“AI
+thinking…”** banner, then fills in the model's narrative in place (via a
+background request) so you can browse while it works.
+
+> **CPU-only note:** the default deployment has no GPU, so the local catalog
+> favours small models (0.5B–3B). 7B+ models run but are slow on CPU — the
+> catalog says so per model.
 
 **Full Windows + Ollama walkthrough** (firewall, `OLLAMA_HOST`, keep-alive,
 troubleshooting): [`docs/OLLAMA_SETUP.md`](docs/OLLAMA_SETUP.md).

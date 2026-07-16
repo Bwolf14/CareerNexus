@@ -1,42 +1,56 @@
 """
-Career Nexus AI client — talks to a self-hosted LLM over the network.
+Career Nexus AI client — talks to self-hosted Ollama models over the network or
+a bundled local engine.
 
-The app speaks the **OpenAI-compatible chat API**, which Ollama, LM Studio,
-and vLLM all expose. Point it at an Ollama server on another machine (e.g. a
-Windows PC with a big GPU) and the AI features light up:
+Configuration is **tiered**: primary / secondary / tertiary model slots, each
+with its own Ollama connection and a matrix of per-model options (thinking off
+by default, temperature, keep-alive, context size, …). Before every prompt the
+app connectivity-tests the slots in order and uses the first that answers; if
+none are enabled or reachable it falls back to **safe mode** (deterministic,
+no AI). All of this is configured from the **admin portal**.
 
-* the follow-up questionnaire is written by the model instead of templates
-  (:func:`ai_client.features.generate_questions`), and
-* the career plan gains per-job analysis and an overall summary
-  (:func:`ai_client.features.generate_match_analysis`).
-
-Connection settings live in a JSON file managed from the web UI's
-``/settings`` page (env vars provide the defaults — see
-:mod:`ai_client.settings`). Every feature call is wrapped so that a missing,
-unreachable, or misbehaving model server degrades back to the deterministic
-behaviour — the AI is an enhancement, never a dependency.
-
-See ``docs/OLLAMA_SETUP.md`` for the Windows + Ollama setup guide.
+See ``docs/OLLAMA_SETUP.md`` for the server-side Ollama setup.
 """
 
 from __future__ import annotations
 
-from .client import AIClientError, chat, test_connection
+from .catalog import CATALOG
+from .client import AIClientError, chat, extract_json, list_models, pull_model, test_connection
 from .features import (
     generate_match_analysis,
     generate_questions,
     generate_resume_tailoring,
 )
-from .settings import load_settings, normalize_base_url, save_settings
+from .settings import (
+    OPTION_SPECS,
+    SLOTS,
+    is_configured,
+    load_settings,
+    normalize_base_url,
+    save_settings,
+)
+from .system import resources
+from .tiered import active_status, resolve_slot, run_chat
 
 __all__ = [
     "AIClientError",
     "chat",
+    "run_chat",
     "test_connection",
+    "list_models",
+    "pull_model",
+    "extract_json",
     "generate_questions",
     "generate_match_analysis",
     "generate_resume_tailoring",
     "load_settings",
     "save_settings",
     "normalize_base_url",
+    "is_configured",
+    "active_status",
+    "resolve_slot",
+    "OPTION_SPECS",
+    "SLOTS",
+    "CATALOG",
+    "resources",
 ]

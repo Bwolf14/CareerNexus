@@ -1,0 +1,131 @@
+"""
+Tiered model selection: try primary → secondary → tertiary, use the first that
+passes a live connectivity test, and fall back to safe mode (no AI) if none do.
+
+``run_chat`` is the single entry point the product features call. It resolves an
+available slot *at call time* (per your requirement that every prompt is
+preceded by a connectivity test), builds the per-model request options from the
+settings matrix, and sends the prompt via :mod:`ai_client.client`.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from . import client
+from .client import AIClientError
+from .settings import (
+    OPTION_SPECS,
+    SLOTS,
+    effective_base_url,
+    slot_is_configured,
+)
+
+
+def build_options(slot_options: dict[str, Any]) -> tuple[bool, Optional[str], dict[str, Any]]:
+    """Translate a slot's option matrix into (think, keep_alive, options).
+
+    * ``think`` — the Thinking row (default OFF → the request sends think:false).
+    * ``keep_alive`` — "<n>m" when the Keep-model-loaded row is on, else None.
+    * ``options`` — Ollama sampling options for every other enabled value row.
+    """
+    slot_options = slot_options or {}
+
+    def entry(key: str) -> dict[str, Any]:
+        return slot_options.get(key) or {}
+
+    think = bool(entry("think").get("on"))
+
+    keep_alive = None
+    ka = entry("keep_alive")
+    if ka.get("on"):
+        keep_alive = f"{int(ka.get('value', 0))}m"
+
+    options: dict[str, Any] = {}
+    # Map each value-row (except keep_alive, handled above) to an Ollama option.
+    numeric = ("temperature", "num_predict", "num_ctx", "top_p", "top_k", "seed")
+    for key in numeric:
+        e = entry(key)
+        if e.get("on") and e.get("value") is not None:
+            options[key] = e["value"]
+    stop = entry("stop")
+    if stop.get("on") and str(stop.get("value") or "").strip():
+        options["stop"] = [str(stop["value"])]
+
+    return think, keep_alive, options
+
+
+def resolve_slot(config: dict[str, Any], *, probe: bool = True) -> Optional[dict[str, Any]]:
+    """First usable slot in priority order, or None (→ safe mode).
+
+    With ``probe`` (the default) each candidate is connectivity-tested and its
+    model must be installed; without it, the first configured slot is returned
+    without touching the network (used for cheap "is anything set up?" checks).
+    """
+    config = config or {}
+    slots = config.get("slots") or {}
+    options = config.get("options") or {}
+    connect_timeout = float(config.get("connect_timeout") or 4.0)
+
+    for name in SLOTS:
+        slot = slots.get(name) or {}
+        if not slot_is_configured(slot):
+            continue
+        base = effective_base_url(slot)
+        model = slot.get("model")
+        if probe:
+            result = client.test_connection(base, connect_timeout=connect_timeout)
+            if not result.get("ok"):
+                continue
+            if not client.has_model(base, model, connect_timeout=connect_timeout):
+                continue
+        return {
+            "name": name,
+            "slot": slot,
+            "options": options.get(name) or {},
+            "base": base,
+            "model": model,
+        }
+    return None
+
+
+def configured_model(config: dict[str, Any]) -> Optional[str]:
+    """The model of the first configured slot (no network) — for UI labels."""
+    slots = (config or {}).get("slots") or {}
+    for name in SLOTS:
+        slot = slots.get(name) or {}
+        if slot_is_configured(slot):
+            return slot.get("model")
+    return None
+
+
+def active_status(config: dict[str, Any]) -> dict[str, Any]:
+    """For the UI/banner: which slot (if any) would serve the next prompt."""
+    active = resolve_slot(config, probe=True)
+    if active is None:
+        return {"available": False, "slot": None, "model": None}
+    return {"available": True, "slot": active["name"], "model": active["model"]}
+
+
+def run_chat(config: dict[str, Any], messages: list[dict[str, str]]) -> str:
+    """Resolve an available slot and run one chat; raise if none are usable.
+
+    Callers treat :class:`AIClientError` as "fall back to the deterministic
+    (safe-mode) behaviour".
+    """
+    active = resolve_slot(config, probe=True)
+    if active is None:
+        raise AIClientError(
+            "No AI model is available (none enabled/reachable) — running in safe mode."
+        )
+    think, keep_alive, options = build_options(active["options"])
+    return client.chat(
+        active["base"],
+        active["model"],
+        messages,
+        think=think,
+        keep_alive=keep_alive,
+        options=options,
+        connect_timeout=float(config.get("connect_timeout") or 4.0),
+        read_timeout=float(config.get("read_timeout") or 180.0),
+    )

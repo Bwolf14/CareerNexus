@@ -17,8 +17,8 @@
   {% elif ai_status and ai_status.error %}
     <div class="banner warn">
       <strong>AI unavailable</strong> — {{ ai_status.error }}
-      Showing template questions instead; check <a href="/settings">AI settings</a>
-      or <a href="/questions/{{ search_id }}?regen=1">retry</a>.
+      Showing template questions instead;
+      <a href="/questions/{{ search_id }}?regen=1">retry</a>.
     </div>
   {% elif ai_status and ai_status.configured %}
     <div class="banner ai">
@@ -29,8 +29,8 @@
   {% else %}
     <div class="banner ai">
       <strong>🤖 AI interviewer available.</strong> These questions are template-generated.
-      Connect your Ollama server in <a href="/settings">AI settings</a> and the model will
-      write follow-ups tailored to your resume and the matched postings instead.
+      An admin can connect an Ollama model in the admin portal and the model will write
+      follow-ups tailored to your resume and the matched postings instead.
     </div>
   {% endif %}
 
@@ -56,7 +56,7 @@
               {% endfor %}
             </div>
           {% elif q.type == 'multichoice' %}
-            <div class="checks">
+            <div class="checks" {% if q.max_select %}data-max="{{ q.max_select }}"{% endif %}>
               {% for opt in q.options %}
                 <label><input type="checkbox" name="{{ q.id }}" value="{{ opt }}"
                               {{ 'checked' if opt in ((answers or {}).get(q.id) or []) else '' }} /><span>{{ opt }}</span></label>
@@ -84,7 +84,7 @@
               </div>
             </div>
           {% endif %}
-          {% if q.hint %}<div class="hint">{{ q.hint }}</div>{% endif %}
+          {% if q.hint %}<div class="hint {% if q.max_select %}pick-hint{% endif %}">{{ q.hint }}</div>{% endif %}
         </div>
       {% endfor %}
 
@@ -97,4 +97,32 @@
         with this search so the future AI step can use them too.</div>
     </form>
   </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Enforce the "pick up to N" limit on multichoice groups: block the extra
+  // selection, shake the clicked option, and flash the hint.
+  document.querySelectorAll('.checks[data-max]').forEach(group => {
+    const max = parseInt(group.dataset.max, 10);
+    const hint = group.parentElement.querySelector('.pick-hint');
+    group.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const checked = group.querySelectorAll('input[type=checkbox]:checked');
+        if (checked.length > max) {
+          cb.checked = false;               // reject the extra pick
+          const label = cb.closest('label');
+          label.classList.remove('shake');
+          void label.offsetWidth;           // restart the animation
+          label.classList.add('shake');
+          if (hint) {
+            hint.classList.remove('flash');
+            void hint.offsetWidth;
+            hint.classList.add('flash');
+          }
+        }
+      });
+    });
+  });
+</script>
 {% endblock %}

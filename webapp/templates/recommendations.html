@@ -8,6 +8,7 @@
      <strong>{{ picks | length }}</strong> most worth your time, why we picked them, and what
      would make your applications stronger.</p>
 
+  <div id="ai-status">
   {% if ai_status and ai_status.used %}
     <div class="banner ai">
       <strong>🤖 AI analysis by <code>{{ ai_status.model }}</code>.</strong> The shortlist is
@@ -15,27 +16,33 @@
       growth fit, trade-offs, and an overall read of your market.
       <a href="/recommendations/{{ search_id }}?regen=1">Regenerate analysis</a>.
     </div>
-  {% elif ai_status and ai_status.error %}
+  {% elif ai_pending %}
+    <div class="banner ai" id="ai-pending-note">
+      <strong>🤖 Generating AI analysis…</strong> the model is reading your shortlist. The
+      heuristic ranking below is ready now — this will fill in the narrative when it's done.
+    </div>
+  {% elif ai_status and ai_status.configured %}
     <div class="banner warn">
-      <strong>AI analysis unavailable</strong> — {{ ai_status.error }}
-      Showing heuristic reasoning only; check <a href="/settings">AI settings</a> or
-      <a href="/recommendations/{{ search_id }}?regen=1">retry</a>.
+      <strong>AI analysis unavailable</strong> right now (no model reachable) — showing
+      heuristic reasoning only. <a href="/recommendations/{{ search_id }}?regen=1">Retry</a>.
     </div>
   {% else %}
     <div class="banner ai">
-      <strong>🤖 Add AI analysis.</strong> This shortlist is ranked by a transparent
-      heuristic — skill overlap, title fit, and your answers (pay range, work style,
-      preferred skills). Connect your Ollama server in <a href="/settings">AI settings</a>
-      and the model will add per-job narrative analysis on top.
+      <strong>🤖 AI analysis is off.</strong> This shortlist is ranked by a transparent
+      heuristic — skill overlap, title fit, and your answers. An admin can enable an AI model
+      in the admin portal to add per-job narrative analysis.
     </div>
   {% endif %}
+  </div>
 
+  <div id="ai-overall">
   {% if overall_analysis %}
     <div class="card">
       <h2>🤖 AI career analysis</h2>
       <p class="sub" style="font-size:.95rem; margin:0;">{{ overall_analysis }}</p>
     </div>
   {% endif %}
+  </div>
 
   {% for note in notes %}
     <div class="banner warn">{{ note }}</div>
@@ -88,8 +95,14 @@
             {% endif %}
           </ul>
 
-          {% if pick.ai_analysis %}
-            <div class="ai-analysis">🤖 {{ pick.ai_analysis }}</div>
+          <div class="ai-analysis" id="ai-pick-{{ loop.index0 }}"
+               {% if not pick.ai_analysis %}style="display:none;"{% endif %}>
+            {% if pick.ai_analysis %}🤖 {{ pick.ai_analysis }}{% endif %}
+          </div>
+          {% if ai_pending %}
+            <div class="ai-analysis pending" id="ai-pick-loading-{{ loop.index0 }}">
+              🤖 <span class="dots">Analysing this match…</span>
+            </div>
           {% endif %}
 
           {% if job.job_url %}
@@ -121,10 +134,13 @@
       {% else %}
         <p class="empty">Nothing jumped out — your resume covers the fundamentals well.</p>
       {% endif %}
-      <div class="banner ai" style="margin-top:1.1rem;">
-        <strong>Coming soon:</strong> AI-tailored rewrites — bullet-point suggestions written
-        against the specific postings above.
-      </div>
+      {% if ai_status and ai_status.configured %}
+        <div class="banner ai" style="margin-top:1.1rem;">
+          <strong>🤖 Tailor for a specific job:</strong> open any posting from
+          <a href="/matches/{{ search_id }}">your matches</a> and hit <em>Tailor</em> for
+          AI-written, posting-specific resume suggestions.
+        </div>
+      {% endif %}
     </div>
 
     <div class="card">
@@ -191,4 +207,65 @@
       <a class="btn ghost" href="/">Start a new session</a>
     </div>
   </div>
+
+  {% if ai_pending %}
+    <div id="ai-thinking-bar" class="ai-thinking-bar"
+         data-url="{{ url_for('recommendations_ai', search_id=search_id) }}{{ '?regen=1' if ai_regen else '' }}">
+      <span class="spin"></span>
+      <span>🤖 AI is thinking… please wait. Keep browsing your shortlist — the analysis
+            will appear here when it's ready.</span>
+    </div>
+  {% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if ai_pending %}
+<script>
+  (async function () {
+    const bar = document.getElementById('ai-thinking-bar');
+    if (!bar) return;
+    try {
+      const resp = await fetch(bar.dataset.url, {headers: {'Accept': 'application/json'}});
+      const data = await resp.json();
+
+      // Remove the per-pick "analysing…" placeholders.
+      document.querySelectorAll('[id^="ai-pick-loading-"]').forEach(el => el.remove());
+
+      const statusBox = document.getElementById('ai-status');
+      if (data.used) {
+        // Fill each pick's analysis.
+        const per = data.per_index || {};
+        Object.keys(per).forEach(i => {
+          const el = document.getElementById('ai-pick-' + i);
+          if (el) { el.innerHTML = '🤖 ' + per[i]; el.style.display = ''; }
+        });
+        if (data.overall) {
+          document.getElementById('ai-overall').innerHTML =
+            '<div class="card"><h2>🤖 AI career analysis</h2>' +
+            '<p class="sub" style="font-size:.95rem;margin:0;"></p></div>';
+          document.querySelector('#ai-overall .sub').textContent = data.overall;
+        }
+        if (statusBox) {
+          statusBox.innerHTML =
+            '<div class="banner ai"><strong>🤖 AI analysis by <code>' +
+            (data.model || 'model') + '</code>.</strong> The model added the narrative below; ' +
+            'the shortlist stays ranked by the transparent ✓ signals. ' +
+            '<a href="?regen=1">Regenerate analysis</a>.</div>';
+        }
+      } else if (statusBox) {
+        const msg = data.error
+          ? ('AI analysis unavailable — ' + data.error)
+          : 'AI analysis is off — an admin can enable a model in the admin portal.';
+        statusBox.innerHTML = '<div class="banner warn"><strong>' + msg + '</strong></div>';
+      }
+    } catch (err) {
+      const statusBox = document.getElementById('ai-status');
+      if (statusBox) statusBox.innerHTML =
+        '<div class="banner warn"><strong>AI analysis unavailable — ' + err + '</strong></div>';
+    } finally {
+      if (bar) bar.remove();
+    }
+  })();
+</script>
+{% endif %}
 {% endblock %}

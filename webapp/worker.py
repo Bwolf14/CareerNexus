@@ -28,12 +28,9 @@ from datetime import datetime, timedelta
 
 from job_scraper import dedupe_cross_board
 
-from . import db, email_utils, search_service
+from . import configure_logging, db, email_utils, search_service
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [worker] %(levelname)s %(message)s",
-)
+configure_logging()
 log = logging.getLogger("careernexus.worker")
 
 POLL_SECONDS = int(os.environ.get("WORKER_POLL_SECONDS", "5"))

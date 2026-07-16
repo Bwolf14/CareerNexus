@@ -19,7 +19,8 @@ from typing import Any, Optional
 
 from job_matcher.questions import MAX_QUESTIONS, structured_questions
 
-from .client import AIClientError, chat, extract_json
+from .client import AIClientError, extract_json
+from .tiered import run_chat
 
 # How many open-ended questions we ask the model for. The structured
 # preference questions (pay, work style, skills) are appended after, and the
@@ -123,13 +124,12 @@ def generate_questions(
         ],
         "how_many_questions": MAX_AI_QUESTIONS,
     }
-    reply = chat(
+    reply = run_chat(
         settings,
         [
             {"role": "system", "content": _QUESTION_SYSTEM},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ],
-        temperature=0.7,
     )
     items = extract_json(reply, list)
 
@@ -188,13 +188,12 @@ def generate_resume_tailoring(
         "resume": _resume_digest(parsed),
         "posting": _posting_digest(job, desc_chars=1200),
     }
-    reply = chat(
+    reply = run_chat(
         settings,
         [
             {"role": "system", "content": _TAILOR_SYSTEM},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ],
-        temperature=0.4,
     )
     data = extract_json(reply, dict)
 
@@ -243,13 +242,12 @@ def generate_match_analysis(
             for i, pick in enumerate(picks)
         ],
     }
-    reply = chat(
+    reply = run_chat(
         settings,
         [
             {"role": "system", "content": _ANALYSIS_SYSTEM},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ],
-        temperature=0.3,
     )
     data = extract_json(reply, dict)
 

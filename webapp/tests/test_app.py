@@ -138,8 +138,13 @@ def anon_client(monkeypatch, tmp_path):
         yield c
 
 
-AI_SETTINGS = {"enabled": True, "base_url": "http://pc.lan:11434/v1",
-               "model": "qwen3:32b", "connect_timeout": 4.0, "read_timeout": 180.0}
+AI_SETTINGS = {
+    "slots": {
+        "primary": {"enabled": True, "base_url": "http://pc.lan:11434",
+                    "model": "qwen3:4b", "use_local": False},
+    },
+    "connect_timeout": 4.0, "read_timeout": 180.0,
+}
 
 
 @pytest.fixture()
@@ -271,6 +276,24 @@ def test_skip_does_not_store_answers(client):
     assert b"skipped the follow-up questions" in resp.data
 
 
+def test_multichoice_pick_limit_enforced_server_side(client, monkeypatch):
+    # Even if the browser check is bypassed, only the first 3 picks are stored.
+    resp = client.post("/questions/7", data={
+        "priorities": ["Career growth", "Compensation", "Job stability",
+                       "Company culture", "Work–life balance"],
+    })
+    assert resp.status_code == 302
+    from webapp import plan_store
+    stored = plan_store.load_answers(7)["priorities"]
+    assert len(stored) == 3
+
+
+def test_questions_page_marks_pick_limit(client):
+    resp = client.get("/questions/7")
+    assert resp.status_code == 200
+    assert b'data-max="3"' in resp.data      # priorities / skills limited to 3
+
+
 def test_legacy_routes_redirect(client):
     assert client.get("/jobs").status_code == 302
     resp = client.get("/jobs/7")
@@ -361,43 +384,61 @@ def test_questions_fall_back_when_ai_fails(client, ai_client_on, monkeypatch):
     assert b"Acme Corp" in resp.data
 
 
-def test_recommendations_attach_ai_analysis_and_cache(client, ai_client_on, monkeypatch):
+def test_recommendations_ai_runs_async_and_caches(client, ai_client_on, monkeypatch):
     calls = {"n": 0}
 
-    def fake_analysis(settings, parsed, picks, answers=None):
+    def fake_analysis(config, parsed, picks, answers=None):
         calls["n"] += 1
         return {"overall": "A healthy local market for network roles.",
                 "per_index": {0: "Excellent skill and pay alignment."}}
 
     monkeypatch.setattr(app_module, "generate_match_analysis", fake_analysis)
 
+    # The page renders immediately with the "thinking" banner — no model call yet.
     resp = client.get("/recommendations/7")
     assert resp.status_code == 200
-    assert b"AI analysis by" in resp.data
-    assert b"healthy local market" in resp.data
-    assert b"Excellent skill and pay alignment" in resp.data
+    assert b"Generating AI analysis" in resp.data
+    assert b"Top picks" in resp.data
+    assert calls["n"] == 0
+
+    # The async endpoint runs the model once and returns the analysis.
+    resp = client.get("/recommendations/7/ai")
+    data = json.loads(resp.data)
+    assert data["used"] is True
+    assert data["overall"].startswith("A healthy")
+    assert data["per_index"]["0"].startswith("Excellent")
     assert calls["n"] == 1
 
-    # Cached on revisit (same answers, same shortlist).
-    client.get("/recommendations/7")
+    # Cached on the next call (same answers + shortlist).
+    client.get("/recommendations/7/ai")
     assert calls["n"] == 1
 
     # ?regen=1 forces a fresh generation.
-    client.get("/recommendations/7?regen=1")
+    client.get("/recommendations/7/ai?regen=1")
     assert calls["n"] == 2
+
+    # Once cached, the page attaches the analysis inline (no pending banner).
+    resp = client.get("/recommendations/7")
+    assert b"AI analysis by" in resp.data
 
 
 def test_recommendations_survive_ai_failure(client, ai_client_on, monkeypatch):
     from ai_client import AIClientError
 
-    def boom(settings, parsed, picks, answers=None):
+    def boom(config, parsed, picks, answers=None):
         raise AIClientError("model not found")
 
     monkeypatch.setattr(app_module, "generate_match_analysis", boom)
+    # The page still renders the heuristic shortlist (with the thinking banner).
     resp = client.get("/recommendations/7")
     assert resp.status_code == 200
-    assert b"AI analysis unavailable" in resp.data
-    assert b"Top picks" in resp.data  # heuristic shortlist still renders
+    assert b"Top picks" in resp.data
+
+    # The async endpoint reports the failure and falls back to safe mode.
+    resp = client.get("/recommendations/7/ai")
+    data = json.loads(resp.data)
+    assert data["used"] is False
+    assert "model not found" in data["error"]
 
 
 # ---------------------------------------------------------------------------
