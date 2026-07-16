@@ -350,8 +350,12 @@ def test_job_detail_page_renders(client):
     assert resp.status_code == 200
     assert b"Network Technician" in resp.data
     assert b"About Northwind" in resp.data          # company section present
-    assert b"/api/company-info?part=basic" in resp.data  # async info fetch
     assert b"View original posting" in resp.data
+    # The async fetch URL must keep a literal & between params — Jinja
+    # autoescaping to &amp; inside the script block breaks the key param
+    # (regression: "Company lookup failed: SyntaxError: Unexpected token '<'").
+    assert b"/api/company-info?part=basic&search_id=7&key=" in resp.data
+    assert b"amp;key=" not in resp.data
 
 
 def test_job_detail_404_for_unknown_key(client):
