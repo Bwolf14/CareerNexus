@@ -163,9 +163,24 @@ before exposing it). From the portal an admin can:
   required consent checkbox gates account creation). Forgotten passwords are
   reset via a one-time link; repeated failed logins are rate-limited. Manage or
   delete your account (and export all your data as JSON) at `/account`.
-* **Application tracker** (`/saved`) — hit **Save** on any posting to bookmark
-  it, then move it through *Interested → Applied → Interviewing → Offer /
-  Rejected* and jot notes.
+* **Job application tracker** (`/saved`) — hit **Save** on any posting (from
+  the matches page or the career plan) to bookmark it. Phases sit on the left
+  (*Interested → Applied → Interviewing → Offer / Rejected*); pick one and its
+  list slides in. Clicking a job opens its full detail page.
+* **Job + company detail pages** (`/job/…`, `/tracker/job/…`) — everything from
+  the posting (pay, location, remote, description) instantly, plus a company
+  background section that fills in after load: a non-AI **Wikipedia** summary
+  when a reliable page exists, an optional AI overview grounded only in the
+  collected data, other stored postings from the same company, and a one-click
+  live board search for more of that company's jobs.
+* **Career plan layout** — top 3 picks on the left (the #1 pick highlighted in
+  orange) with compact "why we picked this" lines; a slide-out panel shows the
+  full ranked list; resume-alteration suggestions on the right; certifications
+  and further tips full-width below.
+* **Named resumes** — every upload requires a name, shown everywhere resumes
+  are listed, with a slide-out preview of the parsed contents.
+* **Light mode** — the ◐ button in the nav toggles light/dark (persists per
+  browser).
 * **Tailor my resume** (`/tailor/...`) — per-posting advice on which of your
   skills to lead with and which keywords/gaps to address (AI-written when an
   Ollama server is configured, deterministic otherwise).

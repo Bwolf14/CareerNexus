@@ -66,7 +66,7 @@
             <label class="field-label" for="resume_id">Resume</label>
             <select id="resume_id" name="resume_id" required>
               {% for r in resumes %}
-                <option value="{{ r.id }}">#{{ r.id }} — {{ r.username }} ({{ r.upload_date }})</option>
+                <option value="{{ r.id }}">{{ r.label or 'Resume #' ~ r.id }} ({{ r.upload_date }})</option>
               {% endfor %}
             </select>
           </div>

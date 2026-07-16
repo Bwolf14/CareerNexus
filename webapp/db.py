@@ -455,12 +455,17 @@ def _skill_id(cur, name: str) -> Optional[int]:
     return row["id"] if row else None
 
 
-def save_parsed_resume(parsed: dict[str, Any], user_id: Optional[int] = None) -> int:
+def save_parsed_resume(
+    parsed: dict[str, Any],
+    user_id: Optional[int] = None,
+    label: Optional[str] = None,
+) -> int:
     """Persist a parsed resume across the relational schema; return its row id.
 
     When ``user_id`` is given (the logged-in uploader) the resume is tied to that
     account; otherwise a placeholder identity is synthesised from the resume's
-    contact info (legacy/anonymous path). The complete parsed document is stored
+    contact info (legacy/anonymous path). ``label`` is the user-chosen name shown
+    everywhere the resume is referenced. The complete parsed document is stored
     as JSON in ``user_resumes`` (the canonical, lossless record). Skills and the
     experience/education entries are additionally normalised into their own
     tables so the data is queryable in DBeaver without parsing JSON.
@@ -468,6 +473,7 @@ def save_parsed_resume(parsed: dict[str, Any], user_id: Optional[int] = None) ->
     contact = parsed.get("contact_info") or {}
     name = contact.get("name")
     email = contact.get("email")
+    label = (label or None) and label.strip()[:120]
 
     conn = get_connection()
     try:
@@ -476,10 +482,22 @@ def save_parsed_resume(parsed: dict[str, Any], user_id: Optional[int] = None) ->
             if user_id is None:
                 user_id = _get_or_create_user(cur, name, email)
 
-            cur.execute(
-                "INSERT INTO user_resumes (user_id, parsed_data) VALUES (%s, %s)",
-                (user_id, json.dumps(parsed)),
-            )
+            try:
+                cur.execute(
+                    "INSERT INTO user_resumes (user_id, label, parsed_data) "
+                    "VALUES (%s, %s, %s)",
+                    (user_id, label, json.dumps(parsed)),
+                )
+            except pymysql.err.OperationalError as exc:
+                # label column missing on a pre-upgrade database -> base insert.
+                if exc.args and exc.args[0] == 1054:
+                    cur.execute(
+                        "INSERT INTO user_resumes (user_id, parsed_data) "
+                        "VALUES (%s, %s)",
+                        (user_id, json.dumps(parsed)),
+                    )
+                else:
+                    raise
             resume_id = cur.lastrowid
 
             # Skills -> skills + user_skills (deduped via UNIQUE + INSERT IGNORE).
@@ -545,38 +563,45 @@ def save_parsed_resume(parsed: dict[str, Any], user_id: Optional[int] = None) ->
 
 
 def list_resumes(limit: int = 100, user_id: Optional[int] = None) -> list[dict[str, Any]]:
-    """Recent resumes with the uploader's name/email for the index page.
+    """Recent resumes (with label + uploader's name/email) for the index page.
 
     When ``user_id`` is given, only that account's resumes are returned (each
-    signed-in user sees their own uploads, not everyone's).
+    signed-in user sees their own uploads, not everyone's). Falls back to a
+    label-less query on pre-upgrade databases.
     """
+    where = "WHERE r.user_id = %s" if user_id is not None else ""
+    params: tuple = (user_id, limit) if user_id is not None else (limit,)
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            if user_id is None:
+            try:
                 cur.execute(
-                    """
-                    SELECT r.id, r.upload_date, u.username, u.email
+                    f"""
+                    SELECT r.id, r.label, r.upload_date, u.username, u.email
                     FROM user_resumes r
                     JOIN users u ON u.id = r.user_id
+                    {where}
                     ORDER BY r.id DESC
                     LIMIT %s
                     """,
-                    (limit,),
+                    params,
                 )
-            else:
+                return cur.fetchall()
+            except pymysql.err.OperationalError as exc:
+                if not (exc.args and exc.args[0] == 1054):
+                    raise
                 cur.execute(
-                    """
+                    f"""
                     SELECT r.id, r.upload_date, u.username, u.email
                     FROM user_resumes r
                     JOIN users u ON u.id = r.user_id
-                    WHERE r.user_id = %s
+                    {where}
                     ORDER BY r.id DESC
                     LIMIT %s
                     """,
-                    (user_id, limit),
+                    params,
                 )
-            return cur.fetchall()
+                return [{**row, "label": None} for row in cur.fetchall()]
     finally:
         conn.close()
 
@@ -804,6 +829,50 @@ def get_job_search(search_id: int) -> Optional[dict[str, Any]]:
                 WHERE s.id = %s
                 """,
                 (search_id,),
+            )
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def jobs_by_company(
+    user_id: int, company: str, limit: int = 25
+) -> list[dict[str, Any]]:
+    """Stored postings from one company across all of a user's searches.
+
+    Powers the "more jobs at this company" section of the job-detail page —
+    non-AI, instant, and scoped to the requesting user's own scrape history.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT j.source_site, j.external_id, j.title, j.company,
+                       j.location, j.job_type, j.is_remote, j.salary_min,
+                       j.salary_max, j.salary_currency, j.salary_interval,
+                       j.link AS job_url, j.date_posted, j.search_id
+                FROM jobs j
+                JOIN job_searches s ON s.id = j.search_id
+                WHERE s.user_id = %s AND j.company = %s
+                ORDER BY (j.date_posted IS NULL), j.date_posted DESC, j.id DESC
+                LIMIT %s
+                """,
+                (user_id, (company or "")[:255], limit),
+            )
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def get_saved_job(user_id: int, saved_id: int) -> Optional[dict[str, Any]]:
+    """One saved-job row, only if it belongs to the user."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM saved_jobs WHERE id = %s AND user_id = %s",
+                (saved_id, user_id),
             )
             return cur.fetchone()
     finally:

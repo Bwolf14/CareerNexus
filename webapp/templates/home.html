@@ -32,6 +32,13 @@
         <p>PDF or DOCX · up to 16&nbsp;MB · parsed locally, stored in your database</p>
       </label>
       <div class="filename" id="filename"></div>
+      <div style="margin-top:1rem; max-width:420px;">
+        <label class="field-label" for="resume_name">Resume name</label>
+        <input type="text" id="resume_name" name="resume_name" maxlength="120" required
+               placeholder="e.g. Trades resume 2026" />
+        <div class="hint">Required — this is how the resume is labelled everywhere
+          (uploads list, alerts, tracker).</div>
+      </div>
       <div class="actions">
         <button class="btn big" id="submit" type="submit" disabled>Parse my resume →</button>
         <span class="spinner" id="spinner">Parsing your resume…</span>
@@ -75,19 +82,23 @@
       {% endif %}
 
       {% if resumes %}
-        <details class="advanced" style="margin-top:1.3rem;">
-          <summary>Parsed resumes ({{ resumes | length }})</summary>
+        <details class="advanced" style="margin-top:1.3rem;" open>
+          <summary>Your resumes ({{ resumes | length }})</summary>
           <div class="inner tablewrap">
             <table>
-              <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Uploaded</th><th></th></tr></thead>
+              <thead><tr><th>#</th><th>Resume name</th><th>Uploaded</th><th></th></tr></thead>
               <tbody>
                 {% for r in resumes %}
                 <tr>
                   <td>{{ r.id }}</td>
-                  <td>{{ r.username }}</td>
-                  <td>{{ r.email }}</td>
+                  <td><strong>{{ r.label or 'Untitled (#' ~ r.id ~ ')' }}</strong></td>
                   <td>{{ r.upload_date }}</td>
-                  <td style="white-space:nowrap;"><a href="/profile/{{ r.id }}">Open profile</a></td>
+                  <td style="white-space:nowrap;">
+                    <a href="/profile/{{ r.id }}">Open profile</a> ·
+                    <button class="logout-btn preview-btn" type="button"
+                            data-id="{{ r.id }}"
+                            data-label="{{ r.label or 'Resume #' ~ r.id }}">Preview</button>
+                  </td>
                 </tr>
                 {% endfor %}
               </tbody>
@@ -97,6 +108,16 @@
       {% endif %}
     {% endif %}
   </div>
+
+  <!-- Resume preview slide-out -->
+  <div class="panel-backdrop" id="preview-backdrop"></div>
+  <aside class="side-panel right" id="preview-panel" aria-hidden="true">
+    <div class="panel-head">
+      <h2 style="margin:0;" id="preview-title">Resume preview</h2>
+      <button class="logout-btn" type="button" id="preview-close">✕ Close</button>
+    </div>
+    <div id="preview-content"><p class="jobmeta">Loading…</p></div>
+  </aside>
 {% endblock %}
 
 {% block scripts %}
@@ -107,17 +128,45 @@
   const filename = document.getElementById('filename');
   const form = document.getElementById('upload-form');
   const spinner = document.getElementById('spinner');
+  const nameInput = document.getElementById('resume_name');
 
   function update() {
+    const named = nameInput.value.trim().length > 0;
     if (file.files.length) {
       filename.textContent = '✓ ' + file.files[0].name;
-      submit.disabled = false;
     } else {
       filename.textContent = '';
-      submit.disabled = true;
     }
+    submit.disabled = !(file.files.length && named);
   }
   file.addEventListener('change', update);
+  nameInput.addEventListener('input', update);
+
+  // Resume preview slide-out.
+  const pvPanel = document.getElementById('preview-panel');
+  const pvBackdrop = document.getElementById('preview-backdrop');
+  const pvContent = document.getElementById('preview-content');
+  function pvToggle(open) {
+    pvPanel.classList.toggle('open', open);
+    pvBackdrop.classList.toggle('show', open);
+    pvPanel.setAttribute('aria-hidden', open ? 'false' : 'true');
+  }
+  document.querySelectorAll('.preview-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      document.getElementById('preview-title').textContent = btn.dataset.label;
+      pvContent.innerHTML = '<p class="jobmeta">Loading…</p>';
+      pvToggle(true);
+      try {
+        const resp = await fetch('/resume/' + btn.dataset.id + '/preview');
+        pvContent.innerHTML = resp.ok ? await resp.text()
+          : '<p class="empty">Could not load the preview.</p>';
+      } catch (err) {
+        pvContent.innerHTML = '<p class="empty">Could not load the preview: ' + err + '</p>';
+      }
+    });
+  });
+  document.getElementById('preview-close').addEventListener('click', () => pvToggle(false));
+  pvBackdrop.addEventListener('click', () => pvToggle(false));
   ['dragover', 'dragenter'].forEach(ev =>
     drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('drag'); }));
   ['dragleave', 'drop'].forEach(ev =>

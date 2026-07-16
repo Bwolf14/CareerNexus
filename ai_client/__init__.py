@@ -17,6 +17,7 @@ from __future__ import annotations
 from .catalog import CATALOG
 from .client import AIClientError, chat, extract_json, list_models, pull_model, test_connection
 from .features import (
+    generate_company_overview,
     generate_match_analysis,
     generate_questions,
     generate_resume_tailoring,
@@ -43,6 +44,7 @@ __all__ = [
     "generate_questions",
     "generate_match_analysis",
     "generate_resume_tailoring",
+    "generate_company_overview",
     "load_settings",
     "save_settings",
     "normalize_base_url",
