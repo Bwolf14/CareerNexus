@@ -63,6 +63,7 @@ from ai_client import (
     load_settings,
 )
 from ai_client.settings import is_configured
+from ai_client.tiered import configured_model
 from job_matcher import (
     analyze_certifications,
     build_questions,
@@ -745,7 +746,7 @@ def _questionnaire_for(
     ai_settings = load_settings()
     ai_status = {
         "configured": is_configured(ai_settings),
-        "model": ai_settings.get("model"),
+        "model": configured_model(ai_settings),
         "generator": "template",
         "error": None,
     }
@@ -774,7 +775,7 @@ def _questionnaire_for(
             search_id,
             {
                 "generator": ai_status["generator"],
-                "model": ai_settings.get("model")
+                "model": configured_model(ai_settings)
                 if ai_status["generator"] == "ai"
                 else None,
                 "questions": question_list,
@@ -872,7 +873,7 @@ def _attach_ai_analysis(
     ai_settings = load_settings()
     ai_status = {
         "configured": is_configured(ai_settings),
-        "model": ai_settings.get("model"),
+        "model": configured_model(ai_settings),
         "used": False,
         "error": None,
     }
@@ -887,7 +888,7 @@ def _attach_ai_analysis(
                  (p.get("job") or {}).get("external_id")]
                 for p in picks
             ],
-            "model": ai_settings.get("model"),
+            "model": configured_model(ai_settings),
         },
         sort_keys=True,
         default=str,
@@ -905,7 +906,7 @@ def _attach_ai_analysis(
             result = generate_match_analysis(ai_settings, parsed, picks, answers)
             analysis = {
                 "key": cache_key,
-                "model": ai_settings.get("model"),
+                "model": configured_model(ai_settings),
                 "overall": result["overall"],
                 # JSON object keys are strings; store them that way from the start.
                 "per_index": {str(i): text for i, text in result["per_index"].items()},
@@ -1136,7 +1137,7 @@ def tailor(search_id: int, dedup_key: str):
 
     ai_settings = load_settings()
     ai_status = {"configured": is_configured(ai_settings),
-                 "model": ai_settings.get("model"), "used": False, "error": None}
+                 "model": configured_model(ai_settings), "used": False, "error": None}
     tailoring = None
     if ai_status["configured"]:
         try:

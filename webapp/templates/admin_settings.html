@@ -2,68 +2,165 @@
 {% block title %}Settings — Career Nexus Admin{% endblock %}
 
 {% block content %}
-  <h1>Settings</h1>
-  <p class="sub">Configure the AI (Ollama) connection and the email/SMTP settings
-     used by the user app and background worker.</p>
+  <h1>AI &amp; email settings</h1>
+  <p class="sub">Configure the tiered AI models, per-model options, local model
+     downloads, and email. The app tries the models <strong>primary →
+     secondary → tertiary</strong>, connectivity-testing each before every
+     prompt, and falls back to <strong>safe mode</strong> (no AI) if none answer.</p>
 
-  <!-- ===================== AI / Ollama ===================== -->
+  <form method="post" action="{{ url_for('settings') }}" id="ai-form">
+    <input type="hidden" name="section" value="ai" />
+
+    <!-- ===================== Model slots ===================== -->
+    <div class="card">
+      <h2>Model slots</h2>
+      <div class="slotgrid">
+        {% for name in slots %}
+          {% set s = ai.slots[name] %}
+          <div class="slotcard" data-slot="{{ name }}">
+            <div class="slot-head">
+              <h3 style="margin:0; text-transform:capitalize;">{{ name }}</h3>
+              <label class="mini"><input type="checkbox" name="slot_{{ name }}_enabled"
+                     value="1" {{ 'checked' if s.enabled }} /> enabled</label>
+            </div>
+
+            <label class="mini local-toggle">
+              <input type="checkbox" class="use-local" name="slot_{{ name }}_use_local"
+                     value="1" {{ 'checked' if s.use_local }} />
+              Use bundled local model
+            </label>
+
+            <label class="field-label" for="slot_{{ name }}_base_url">Ollama server address</label>
+            <input type="text" class="slot-base" id="slot_{{ name }}_base_url"
+                   name="slot_{{ name }}_base_url" value="{{ s.base_url }}"
+                   placeholder="e.g. 192.168.1.50:11434" />
+
+            <div class="actions" style="margin:.5rem 0;">
+              <button class="btn secondary test-btn" type="button" data-slot="{{ name }}">Test</button>
+              <span class="spinner slot-spinner">Testing…</span>
+            </div>
+            <div class="test-result"></div>
+
+            <label class="field-label" for="slot_{{ name }}_model">Model</label>
+            <input type="text" class="slot-model" id="slot_{{ name }}_model"
+                   name="slot_{{ name }}_model" value="{{ s.model }}"
+                   list="models_{{ name }}" placeholder="e.g. qwen2.5:3b" />
+            <datalist id="models_{{ name }}"></datalist>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="hint">Only one slot may use the bundled local model. Ticking
+        “Use bundled local model” greys the server address (it talks to the
+        local engine) — pick the model in the Local models section below.</div>
+    </div>
+
+    <!-- ===================== Options matrix ===================== -->
+    <div class="card">
+      <h2>Per-model options</h2>
+      <p class="sub">Click a cell to turn a setting on for that model. A setting
+        left off for all models is off entirely. Value settings reveal a box when
+        turned on.</p>
+      <div class="tablewrap">
+        <table class="matrix">
+          <thead>
+            <tr><th>Setting</th>{% for name in slots %}<th style="text-transform:capitalize;">{{ name }}</th>{% endfor %}</tr>
+          </thead>
+          <tbody>
+            {% for spec in option_specs %}
+            <tr>
+              <td class="setting-cell">
+                <strong>{{ spec.label }}</strong>
+                <div class="desc">{{ spec.desc }}</div>
+                <div class="rec">💡 {{ spec.recommend }}</div>
+              </td>
+              {% for name in slots %}
+                {% set o = ai.options[name][spec.key] %}
+                <td class="cell">
+                  <label class="cellbox">
+                    <input type="checkbox" class="opt-on" name="opt_{{ name }}_{{ spec.key }}_on"
+                           value="1" {{ 'checked' if o.on }}
+                           {% if spec.kind == 'value' %}data-valbox="val_{{ name }}_{{ spec.key }}"{% endif %} />
+                    <span>on</span>
+                  </label>
+                  {% if spec.kind == 'value' %}
+                    <div class="valwrap {{ '' if o.on else 'off' }}" id="wrap_val_{{ name }}_{{ spec.key }}">
+                      <input class="cellval" id="val_{{ name }}_{{ spec.key }}"
+                             type="{{ 'text' if spec.value_type == 'str' else 'number' }}"
+                             name="opt_{{ name }}_{{ spec.key }}_value" value="{{ o.value }}"
+                             {% if spec.min is defined %}min="{{ spec.min }}"{% endif %}
+                             {% if spec.max is defined %}max="{{ spec.max }}"{% endif %}
+                             {% if spec.step is defined %}step="{{ spec.step }}"{% endif %} />
+                      {% if spec.unit %}<span class="unit">{{ spec.unit }}</span>{% endif %}
+                    </div>
+                  {% endif %}
+                </td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn big" type="submit">Save AI model settings</button>
+    </div>
+    <div class="hint" style="margin-top:.5rem;">Saved to <code>{{ settings_file }}</code>.</div>
+  </form>
+
+  <!-- ===================== Local models ===================== -->
   <div class="card">
-    <h2>AI (Ollama)</h2>
-    {% if ai.enabled and ai.base_url and ai.model %}
-      <div class="banner info"><strong>AI is ON</strong> — using
-        <code>{{ ai.model }}</code> at <code>{{ ai.base_url }}</code>.</div>
-    {% else %}
-      <div class="banner ai"><strong>AI is OFF.</strong> Enter the server address and
-        model, test the connection, then enable and save.</div>
-    {% endif %}
+    <h2>Local models</h2>
+    <p class="sub">Download models to run on this server's own hardware (the
+      bundled Ollama engine at <code>{{ local_url }}</code>). Assign one to a slot
+      with “Use bundled local model” above.</p>
 
-    <form method="post" action="{{ url_for('settings') }}" id="ai-form">
-      <input type="hidden" name="section" value="ai" />
-      <div class="formgrid">
-        <div>
-          <label class="field-label" for="base_url">AI server address</label>
-          <input type="text" id="base_url" name="base_url" value="{{ ai.base_url }}"
-                 placeholder="e.g. 192.168.1.50:11434 (the PC running Ollama)" />
-          <div class="hint">IP or hostname running Ollama (port 11434). <code>/v1</code> is added automatically.</div>
-        </div>
-        <div class="actions" style="margin-top:0;">
-          <button class="btn secondary" type="button" id="test-btn">Test connection</button>
-          <span class="spinner" id="test-spinner">Contacting the server…</span>
-        </div>
-        <div id="test-result"></div>
-        <div>
-          <label class="field-label" for="model">Model</label>
-          <input type="text" id="model" name="model" value="{{ ai.model }}"
-                 list="model-list" placeholder="e.g. qwen3:32b" />
-          <datalist id="model-list"></datalist>
-          <div class="hint">Must match a tag from <code>ollama list</code> — Test connection fills these in.</div>
-        </div>
-        <div>
-          <label class="field-label">Enable AI features</label>
-          <div class="checks">
-            <label><input type="checkbox" name="enabled" value="1"
-                          {{ 'checked' if ai.enabled else '' }} />
-                   <span>Use the AI server for questions, match analysis &amp; tailoring</span></label>
-          </div>
-        </div>
-        <div class="row2">
-          <div>
-            <label class="field-label" for="connect_timeout">Connect timeout (s)</label>
-            <input type="number" id="connect_timeout" name="connect_timeout"
-                   min="1" max="30" step="1" value="{{ ai.connect_timeout | int }}" />
-          </div>
-          <div>
-            <label class="field-label" for="read_timeout">Response timeout (s)</label>
-            <input type="number" id="read_timeout" name="read_timeout"
-                   min="10" max="600" step="10" value="{{ ai.read_timeout | int }}" />
-          </div>
-        </div>
-      </div>
-      <div class="actions">
-        <button class="btn big" type="submit">Save AI settings</button>
-      </div>
-      <div class="hint" style="margin-top:.6rem;">Saved to <code>{{ settings_file }}</code>.</div>
-    </form>
+    <div class="banner {{ 'warn' if res.ram_available_gb is none else 'info' }}">
+      {% if res.ram_available_gb is not none %}
+        Detected: <strong>{{ res.ram_available_gb }} GB</strong> RAM available of
+        {{ res.ram_total_gb }} GB total · {{ res.cpu_count }} CPU cores.
+        This is a <strong>CPU-only</strong> deployment — larger models run slowly.
+      {% else %}
+        Couldn't detect available RAM (psutil missing) — size warnings are disabled.
+      {% endif %}
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Model</th><th>Size</th><th>RAM</th><th>Good for</th><th>CPU performance</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for m in catalog %}
+          <tr class="{{ 'row-warn' if not m.fits else '' }}">
+            <td>
+              <strong>{{ m.label }}</strong><br />
+              <code>{{ m.model }}</code>
+              {% if m.installed %}<span class="src live">installed</span>{% endif %}
+            </td>
+            <td class="jobmeta">{{ m.storage_gb }} GB</td>
+            <td class="jobmeta">{{ m.ram_gb }} GB{% if not m.fits %} ⚠️{% endif %}</td>
+            <td class="jobmeta">{{ m.good_for }}</td>
+            <td class="jobmeta">{{ m.perf }}</td>
+            <td style="white-space:nowrap;">
+              <button class="btn secondary pull-btn" type="button" data-model="{{ m.model }}"
+                      {% if not m.fits %}title="Larger than detected available RAM"{% endif %}>
+                {{ 'Re-download' if m.installed else 'Download' }}
+              </button>
+              <button class="btn ghost load-btn" type="button" data-model="{{ m.model }}">Load</button>
+              <div class="pull-progress" data-model="{{ m.model }}" style="display:none;">
+                <div class="bar"><div class="fill"></div></div>
+                <div class="pstat jobmeta"></div>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint">Downloads run on the server and can take a while on a slow
+      connection. You can leave this page — the download continues — but the
+      progress bar only shows while you're here.</p>
   </div>
 
   <!-- ===================== Email / SMTP ===================== -->
@@ -72,121 +169,44 @@
     <p class="sub">Used for password-reset links and job alerts. Leave the host
        blank to keep the log backend (messages printed to the container log).</p>
     {% if email.smtp_host %}
-      <div class="banner info"><strong>SMTP configured</strong> — sending via
-        <code>{{ email.smtp_host }}</code>.</div>
+      <div class="banner info"><strong>SMTP configured</strong> — sending via <code>{{ email.smtp_host }}</code>.</div>
     {% elif env_smtp_host %}
-      <div class="banner info">Using <code>SMTP_HOST</code> from the environment
-        (<code>{{ env_smtp_host }}</code>). Set a value here to override it.</div>
+      <div class="banner info">Using <code>SMTP_HOST</code> from the environment (<code>{{ env_smtp_host }}</code>).</div>
     {% else %}
-      <div class="banner warn"><strong>Log backend</strong> — no SMTP host set, so
-        reset links and alerts are written to the container log.</div>
+      <div class="banner warn"><strong>Log backend</strong> — no SMTP host set; reset links and alerts go to the container log.</div>
     {% endif %}
-
     <form method="post" action="{{ url_for('settings') }}">
       <input type="hidden" name="section" value="email" />
       <div class="formgrid">
         <div class="row2">
-          <div>
-            <label class="field-label" for="smtp_host">SMTP host</label>
-            <input type="text" id="smtp_host" name="smtp_host" value="{{ email.smtp_host or '' }}"
-                   placeholder="smtp.example.com" />
-          </div>
-          <div>
-            <label class="field-label" for="smtp_port">Port</label>
-            <input type="number" id="smtp_port" name="smtp_port" value="{{ email.smtp_port or '' }}"
-                   placeholder="587" />
-          </div>
+          <div><label class="field-label" for="smtp_host">SMTP host</label>
+            <input type="text" id="smtp_host" name="smtp_host" value="{{ email.smtp_host or '' }}" placeholder="smtp.example.com" /></div>
+          <div><label class="field-label" for="smtp_port">Port</label>
+            <input type="number" id="smtp_port" name="smtp_port" value="{{ email.smtp_port or '' }}" placeholder="587" /></div>
         </div>
         <div class="row2">
-          <div>
-            <label class="field-label" for="smtp_username">Username</label>
-            <input type="text" id="smtp_username" name="smtp_username"
-                   value="{{ email.smtp_username or '' }}" autocomplete="off" />
-          </div>
-          <div>
-            <label class="field-label" for="smtp_password">Password</label>
-            <input type="password" id="smtp_password" name="smtp_password"
-                   value="{{ email.smtp_password or '' }}" autocomplete="new-password" />
-          </div>
+          <div><label class="field-label" for="smtp_username">Username</label>
+            <input type="text" id="smtp_username" name="smtp_username" value="{{ email.smtp_username or '' }}" autocomplete="off" /></div>
+          <div><label class="field-label" for="smtp_password">Password</label>
+            <input type="password" id="smtp_password" name="smtp_password" value="{{ email.smtp_password or '' }}" autocomplete="new-password" /></div>
         </div>
         <div class="row2">
-          <div>
-            <label class="field-label" for="smtp_from">From address</label>
-            <input type="text" id="smtp_from" name="smtp_from" value="{{ email.smtp_from or '' }}"
-                   placeholder="no-reply@example.com" />
-          </div>
-          <div>
-            <label class="field-label" for="app_base_url">App base URL <span class="opt">(for email links)</span></label>
-            <input type="text" id="app_base_url" name="app_base_url" value="{{ email.app_base_url or '' }}"
-                   placeholder="http://localhost:8000" />
-          </div>
+          <div><label class="field-label" for="smtp_from">From address</label>
+            <input type="text" id="smtp_from" name="smtp_from" value="{{ email.smtp_from or '' }}" placeholder="no-reply@example.com" /></div>
+          <div><label class="field-label" for="app_base_url">App base URL <span class="opt">(email links)</span></label>
+            <input type="text" id="app_base_url" name="app_base_url" value="{{ email.app_base_url or '' }}" placeholder="http://localhost:8000" /></div>
         </div>
         <div>
           <label class="field-label">Encryption</label>
-          <div class="checks">
-            <label><input type="checkbox" name="smtp_use_tls" value="1"
-                          {{ 'checked' if email.smtp_use_tls != '0' else '' }} />
-                   <span>Use STARTTLS (recommended)</span></label>
-          </div>
+          <div class="checks"><label><input type="checkbox" name="smtp_use_tls" value="1"
+                {{ 'checked' if email.smtp_use_tls != '0' else '' }} /> <span>Use STARTTLS (recommended)</span></label></div>
         </div>
       </div>
-      <div class="actions">
-        <button class="btn big" type="submit">Save email settings</button>
-      </div>
+      <div class="actions"><button class="btn big" type="submit">Save email settings</button></div>
     </form>
   </div>
 {% endblock %}
 
 {% block scripts %}
-<script>
-  const btn = document.getElementById('test-btn');
-  const spinner = document.getElementById('test-spinner');
-  const result = document.getElementById('test-result');
-  const baseUrl = document.getElementById('base_url');
-  const modelInput = document.getElementById('model');
-  const modelList = document.getElementById('model-list');
-
-  btn.addEventListener('click', async () => {
-    result.innerHTML = '';
-    modelList.innerHTML = '';
-    btn.disabled = true;
-    spinner.style.display = 'inline-block';
-    try {
-      const resp = await fetch('/api/ai/test', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({base_url: baseUrl.value}),
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        if (data.normalized_url) baseUrl.value = data.normalized_url;
-        const models = data.models || [];
-        models.forEach(m => {
-          const opt = document.createElement('option');
-          opt.value = m;
-          modelList.appendChild(opt);
-        });
-        const chips = models.slice(0, 12).map(m =>
-          `<button type="button" class="btn ghost model-chip" style="padding:.3rem .7rem; font-size:.8rem;">${m}</button>`
-        ).join(' ');
-        result.innerHTML =
-          `<div class="banner info" style="margin-top:.2rem;"><strong>Connected</strong> in ${data.latency_ms} ms — ` +
-          `${models.length} model${models.length === 1 ? '' : 's'} available.` +
-          (chips ? `<div style="margin-top:.6rem; display:flex; gap:.4rem; flex-wrap:wrap;">${chips}</div>` : '') +
-          `</div>`;
-        result.querySelectorAll('.model-chip').forEach(chip =>
-          chip.addEventListener('click', () => { modelInput.value = chip.textContent; }));
-      } else {
-        result.innerHTML =
-          `<div class="banner error" style="margin-top:.2rem;"><strong>Connection failed:</strong> ${data.error}</div>`;
-      }
-    } catch (err) {
-      result.innerHTML =
-        `<div class="banner error" style="margin-top:.2rem;"><strong>Test failed:</strong> ${err}</div>`;
-    } finally {
-      btn.disabled = false;
-      spinner.style.display = 'none';
-    }
-  });
-</script>
+<script src="{{ url_for('static', filename='admin_settings.js') }}"></script>
 {% endblock %}

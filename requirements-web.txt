@@ -14,3 +14,7 @@ requests>=2.31
 # parser degrades to its pre-OCR behaviour.
 pytesseract>=0.3.10
 Pillow>=10.0
+
+# Host resource detection (RAM) for the admin's local-model size warnings.
+# Optional: if missing, the warnings are simply skipped.
+psutil>=5.9

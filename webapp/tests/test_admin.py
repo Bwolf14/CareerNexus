@@ -138,14 +138,26 @@ def test_cannot_revoke_last_admin(admin_client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Settings
+# Settings (tiered AI + local models + email)
 # ---------------------------------------------------------------------------
-def test_settings_page_renders(admin_client, monkeypatch):
+@pytest.fixture()
+def _settings_stubs(monkeypatch):
+    # Keep the settings page off the network + off the DB.
     monkeypatch.setattr(adm.db, "get_app_setting", lambda k: None)
+    monkeypatch.setattr(adm, "list_models", lambda base: [])
+    monkeypatch.setattr(adm, "resources",
+                        lambda: {"ram_total_gb": 16.0, "ram_available_gb": 12.0, "cpu_count": 8})
+
+
+def test_settings_page_renders(admin_client, _settings_stubs):
     resp = admin_client.get("/settings")
     assert resp.status_code == 200
-    assert b"AI (Ollama)" in resp.data
+    assert b"Model slots" in resp.data
+    assert b"Per-model options" in resp.data
+    assert b"Local models" in resp.data
     assert b"Email (SMTP)" in resp.data
+    assert b"Thinking" in resp.data              # matrix row
+    assert b"12.0 GB" in resp.data               # detected RAM
 
 
 def test_save_email_settings(admin_client, monkeypatch):
@@ -162,27 +174,55 @@ def test_save_email_settings(admin_client, monkeypatch):
     assert saved["smtp_use_tls"] == "1"
 
 
-def test_save_ai_settings_requires_model_when_enabled(admin_client, monkeypatch):
-    monkeypatch.setattr(adm.db, "get_app_setting", lambda k: None)
-    called = {"n": 0}
+def test_save_ai_settings_persists_slots(admin_client, monkeypatch, tmp_path):
+    monkeypatch.setenv("AI_SETTINGS_FILE", str(tmp_path / "ai.json"))
+    saved = {}
     monkeypatch.setattr(adm, "save_settings",
-                        lambda s: called.__setitem__("n", called["n"] + 1))
-    resp = admin_client.post(
-        "/settings",
-        data={"section": "ai", "enabled": "1", "base_url": "192.168.1.9:11434",
-              "model": ""},
-        follow_redirects=True,
-    )
-    assert b"Pick a model" in resp.data
-    assert called["n"] == 0
+                        lambda cfg: saved.update(cfg) or "path")
+    resp = admin_client.post("/settings", data={
+        "section": "ai",
+        "slot_primary_enabled": "1",
+        "slot_primary_base_url": "192.168.1.9:11434",
+        "slot_primary_model": "qwen2.5:3b",
+        "opt_primary_think_on": "",          # thinking off
+        "opt_primary_temperature_on": "1",
+        "opt_primary_temperature_value": "0",
+    })
+    assert resp.status_code == 302
+    assert saved["slots"]["primary"]["enabled"] is True
+    assert saved["slots"]["primary"]["model"] == "qwen2.5:3b"
+    assert saved["options"]["primary"]["temperature"]["on"] is True
+    assert saved["options"]["primary"]["think"]["on"] is False
 
 
 def test_admin_ai_test_endpoint(admin_client, monkeypatch):
     monkeypatch.setattr(
         adm, "test_connection",
-        lambda s: {"ok": True, "latency_ms": 10, "models": ["qwen3:32b"], "error": None},
+        lambda base: {"ok": True, "latency_ms": 10, "models": ["qwen2.5:3b"], "error": None},
     )
     resp = admin_client.post("/api/ai/test", json={"base_url": "pc.lan:11434"})
     data = json.loads(resp.data)
     assert data["ok"] is True
-    assert data["normalized_url"] == "http://pc.lan:11434/v1"
+    assert data["normalized_url"] == "http://pc.lan:11434"   # native API, no /v1
+
+
+def test_models_pull_streams_progress(admin_client, monkeypatch):
+    monkeypatch.setattr(
+        adm, "pull_model",
+        lambda base, model: iter([
+            {"status": "pulling", "total": 100, "completed": 50},
+            {"status": "success"},
+        ]),
+    )
+    resp = admin_client.post("/api/models/pull", json={"model": "qwen2.5:3b"})
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert '"completed": 50' in body
+    assert '"status": "success"' in body
+
+
+def test_models_installed(admin_client, monkeypatch):
+    monkeypatch.setattr(adm, "list_models", lambda base: ["qwen2.5:3b", "llama3.2:1b"])
+    resp = admin_client.get("/api/models/installed")
+    data = json.loads(resp.data)
+    assert "qwen2.5:3b" in data["models"]

@@ -138,8 +138,13 @@ def anon_client(monkeypatch, tmp_path):
         yield c
 
 
-AI_SETTINGS = {"enabled": True, "base_url": "http://pc.lan:11434/v1",
-               "model": "qwen3:32b", "connect_timeout": 4.0, "read_timeout": 180.0}
+AI_SETTINGS = {
+    "slots": {
+        "primary": {"enabled": True, "base_url": "http://pc.lan:11434",
+                    "model": "qwen3:4b", "use_local": False},
+    },
+    "connect_timeout": 4.0, "read_timeout": 180.0,
+}
 
 
 @pytest.fixture()
