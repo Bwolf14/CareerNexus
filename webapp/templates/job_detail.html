@@ -107,8 +107,11 @@
     const aiBox = document.getElementById('company-ai');
 
     // 1) Non-AI (Wikipedia) first — fast, reliable when available.
+    // |safe: the query is server-built (ints + hex); without it Jinja escapes
+    // the & to &amp; inside this script block and the key param is lost.
     try {
-      const resp = await fetch('/api/company-info?part=basic&{{ info_query }}');
+      const resp = await fetch('/api/company-info?part=basic&{{ info_query|safe }}');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
       if (data.wiki && data.wiki.extract) {
         let html = '';
@@ -131,7 +134,8 @@
 
     // 2) AI overview (grounded in the collected data) — slow, shown when ready.
     try {
-      const resp = await fetch('/api/company-info?part=ai&{{ info_query }}');
+      const resp = await fetch('/api/company-info?part=ai&{{ info_query|safe }}');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
       if (data.ai) {
         aiBox.innerHTML = '<div class="ai-analysis">🤖 <strong>AI overview' +
