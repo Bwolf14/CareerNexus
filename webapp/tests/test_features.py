@@ -8,6 +8,8 @@ DB and scraper are stubbed with monkeypatch, so no MariaDB or network is needed.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from webapp import app as app_module
@@ -319,6 +321,119 @@ def test_worker_alert_emails_new_postings(monkeypatch):
     assert sent["to"] == "alex@example.com"
     assert "Welder" in sent["body"]          # the new posting is emailed
     assert "Network Technician" not in sent["body"]  # the pre-existing one isn't
+
+
+# ---------------------------------------------------------------------------
+# Career-page redesign + job/company detail pages + resume naming
+# ---------------------------------------------------------------------------
+def test_upload_requires_resume_name(client, monkeypatch):
+    monkeypatch.setattr(app_module.db, "save_parsed_resume",
+                        lambda *a, **kw: pytest.fail("should not be called"))
+    resp = client.post("/upload", data={})  # no resume_name
+    assert resp.status_code == 400
+    assert b"Name your resume" in resp.data
+
+
+def test_plan_page_top_pick_and_panel(client):
+    resp = client.get("/recommendations/7")
+    assert resp.status_code == 200
+    assert b"top-pick" in resp.data           # #1 highlighted
+    assert b"TOP PICK" in resp.data
+    assert b"rank-panel" in resp.data         # slide-out ranked list exists
+    assert b"/saved/add" in resp.data         # save-to-tracker from the plan page
+    assert b"Suggested resume alterations" in resp.data
+    assert b"Coming soon" not in resp.data
+
+
+def test_job_detail_page_renders(client):
+    resp = client.get("/job/7/" + _job_key())
+    assert resp.status_code == 200
+    assert b"Network Technician" in resp.data
+    assert b"About Northwind" in resp.data          # company section present
+    assert b"/api/company-info?part=basic" in resp.data  # async info fetch
+    assert b"View original posting" in resp.data
+
+
+def test_job_detail_404_for_unknown_key(client):
+    assert client.get("/job/7/doesnotexist").status_code == 404
+
+
+def test_tracker_job_detail_renders(client, monkeypatch):
+    monkeypatch.setattr(
+        app_module.db, "get_saved_job",
+        lambda uid, sid: {"id": sid, "user_id": 1, "dedup_key": "k1",
+                          "title": "Welder", "company": "Acme", "location": "Edmonton",
+                          "source_site": "indeed", "salary_display": None,
+                          "is_remote": 0, "job_url": "https://x", "description": "weld",
+                          "status": "applied", "notes": None},
+    )
+    resp = client.get("/tracker/job/4")
+    assert resp.status_code == 200
+    assert b"Welder" in resp.data
+    assert b"About Acme" in resp.data
+    assert b"saved_id=4" in resp.data     # async info uses the saved context
+
+
+def test_company_info_basic_uses_wikipedia(client, monkeypatch):
+    monkeypatch.setattr(
+        app_module.company_info, "wikipedia_summary",
+        lambda company: {"title": company, "description": "Software company",
+                         "extract": "Northwind makes software.", "url": "https://w"},
+    )
+    resp = client.get("/api/company-info?part=basic&search_id=7&key=" + _job_key())
+    data = json.loads(resp.data)
+    assert data["company"] == "Northwind"
+    assert data["wiki"]["extract"].startswith("Northwind makes")
+
+
+def test_company_info_ai_safe_mode(client, monkeypatch):
+    # No AI configured -> the endpoint reports safe mode, never errors.
+    resp = client.get("/api/company-info?part=ai&search_id=7&key=" + _job_key())
+    data = json.loads(resp.data)
+    assert data["ai"] is None
+    assert data.get("safe_mode") is True
+
+
+def test_tracker_page_has_phase_nav(client, monkeypatch):
+    monkeypatch.setattr(
+        app_module.db, "list_saved_jobs",
+        lambda uid: [{"id": 1, "title": "Network Tech", "company": "NW",
+                      "location": "Calgary", "source_site": "indeed",
+                      "salary_display": None, "is_remote": 0, "job_url": "u",
+                      "status": "applied", "notes": None}],
+    )
+    resp = client.get("/saved")
+    assert resp.status_code == 200
+    assert b"Job application tracker" in resp.data
+    assert b"phase-btn" in resp.data                 # left-side phase nav
+    assert b'data-phase="rejected"' in resp.data
+    assert b"/tracker/job/1" in resp.data            # job links to detail page
+
+
+def test_resume_preview_fragment(client):
+    resp = client.get("/resume/3/preview")
+    assert resp.status_code == 200
+    assert b"Alex Smith" in resp.data
+    assert b"Network Technician" in resp.data
+    resp = client.get("/resume/999/preview")
+    assert resp.status_code == 404
+
+
+def test_wikipedia_summary_rejects_non_org(monkeypatch, tmp_path):
+    from webapp import company_info as ci
+    monkeypatch.setenv("JOB_RESULTS_DIR", str(tmp_path))
+
+    # Page found, but it's clearly not a company -> rejected (None cached).
+    monkeypatch.setattr(ci, "_fetch_summary",
+                        lambda title: {"title": "Apple", "description": "Fruit",
+                                       "extract": "The apple is a round fruit."})
+    assert ci.wikipedia_summary("Apple") is None
+
+    # Org-looking page accepted (fresh name to dodge the cache).
+    monkeypatch.setattr(ci, "_fetch_summary",
+                        lambda title: {"title": "Acme", "description": "Software company",
+                                       "extract": "Acme is a software company."})
+    assert ci.wikipedia_summary("Acme Corp")["title"] == "Acme"
 
 
 # ---------------------------------------------------------------------------

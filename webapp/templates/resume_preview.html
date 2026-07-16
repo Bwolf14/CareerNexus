@@ -1,0 +1,53 @@
+{# Standalone fragment injected into the slide-out preview panel. #}
+{% set contact = parsed.get('contact_info') or {} %}
+<div class="preview-body">
+  <h3 style="margin-top:0;">{{ contact.get('name') or 'Unnamed candidate' }}</h3>
+  <p class="jobmeta" style="margin:.1rem 0 .8rem;">
+    {% if contact.get('email') %}{{ contact['email'] }}{% endif %}
+    {% if contact.get('phone') %} · {{ contact['phone'] }}{% endif %}
+    {% if contact.get('location') %} · {{ contact['location'] }}{% endif %}
+  </p>
+
+  {% if parsed.get('summary') %}
+    <h4>Summary</h4>
+    <p style="font-size:.9rem;">{{ parsed['summary'] }}</p>
+  {% endif %}
+
+  {% set skills = (parsed.get('skills') or {}).get('raw') or [] %}
+  {% if skills %}
+    <h4>Skills</h4>
+    <div>{% for s in skills[:20] %}<span class="pill">{{ s }}</span>{% endfor %}</div>
+  {% endif %}
+
+  {% set experience = parsed.get('experience') or [] %}
+  {% if experience %}
+    <h4>Experience</h4>
+    {% for exp in experience %}
+      {% set dates = exp.get('dates') or {} %}
+      <div class="preview-entry">
+        <strong>{{ exp.get('title') or 'Role' }}</strong>
+        {% if exp.get('company') %} — {{ exp['company'] }}{% endif %}
+        <div class="jobmeta">{{ dates.get('start_date') or '?' }} –
+          {{ 'present' if dates.get('is_current') else (dates.get('end_date') or '?') }}
+          {% if exp.get('location') %} · {{ exp['location'] }}{% endif %}</div>
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  {% set education = parsed.get('education') or [] %}
+  {% if education %}
+    <h4>Education</h4>
+    {% for edu in education %}
+      <div class="preview-entry">
+        <strong>{{ edu.get('degree') or edu.get('field_of_study') or 'Program' }}</strong>
+        {% if edu.get('institution') %} — {{ edu['institution'] }}{% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  {% set certs = parsed.get('certifications') or [] %}
+  {% if certs %}
+    <h4>Certifications</h4>
+    <div>{% for c in certs[:10] %}<span class="pill">{{ c.get('name') or c }}</span>{% endfor %}</div>
+  {% endif %}
+</div>

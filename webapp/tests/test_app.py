@@ -99,7 +99,10 @@ def _common_stubs(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module.db, "get_resume_owner",
                         lambda rid: 1 if rid == 3 else None)
     monkeypatch.setattr(app_module.db, "save_parsed_resume",
-                        lambda parsed, user_id=None: 3)
+                        lambda parsed, user_id=None, label=None: 3)
+    monkeypatch.setattr(app_module.db, "jobs_by_company",
+                        lambda uid, company, limit=25: [])
+    monkeypatch.setattr(app_module.db, "get_saved_job", lambda uid, sid: None)
     monkeypatch.setattr(app_module.db, "get_job_search",
                         lambda sid: dict(SEARCH_ROW) if sid == 7 else None)
     monkeypatch.setattr(app_module.db, "get_jobs_for_search",

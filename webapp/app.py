@@ -43,6 +43,7 @@ import json
 import os
 import tempfile
 from datetime import datetime, timedelta
+from typing import Optional
 
 from flask import (
     Flask,
@@ -57,6 +58,7 @@ from flask import (
 
 from ai_client import (
     AIClientError,
+    generate_company_overview,
     generate_match_analysis,
     generate_questions,
     generate_resume_tailoring,
@@ -80,6 +82,7 @@ from resume_parser.exceptions import ResumeParserError
 from . import (
     ai_store,
     auth,
+    company_info,
     configure_logging,
     db,
     email_utils,
@@ -508,6 +511,21 @@ def index():
 @login_required
 def upload():
     file = request.files.get("resume")
+    # A name is required so the resume is identifiable everywhere it's listed
+    # (home, alerts, tracker) — enforced here as well as in the browser.
+    resume_label = (request.form.get("resume_name") or "").strip()[:120]
+    if not resume_label:
+        return (
+            render_template(
+                "error.html",
+                heading="Name your resume",
+                error="Please give your resume a name (e.g. “Trades resume 2026”) "
+                "so you can tell your uploads apart.",
+                back_url=url_for("index"),
+                back_label="Back to upload",
+            ),
+            400,
+        )
     try:
         parsed = _parse_resume_file(file)
     except ValueError as exc:
@@ -531,7 +549,9 @@ def upload():
         )
 
     try:
-        resume_id = db.save_parsed_resume(parsed, user_id=current_user()["id"])
+        resume_id = db.save_parsed_resume(
+            parsed, user_id=current_user()["id"], label=resume_label
+        )
     except Exception as exc:
         # Parsed fine but not stored: show the profile inline so the parse
         # isn't wasted, with the search step disabled (it needs the DB).
@@ -549,6 +569,17 @@ def upload():
         )
 
     return redirect(url_for("profile", resume_id=resume_id, f=file.filename))
+
+
+@app.route("/resume/<int:resume_id>/preview")
+@login_required
+def resume_preview(resume_id: int):
+    """HTML fragment with the parsed-resume summary, for the slide-out preview."""
+    _require_owned_resume(resume_id)
+    parsed = db.get_resume_json(resume_id)
+    if parsed is None:
+        abort(404, description="No parsed resume found with that id.")
+    return render_template("resume_preview.html", parsed=parsed)
 
 
 # ---------------------------------------------------------------------------
@@ -874,6 +905,16 @@ def _format_answer(question: dict, answer) -> str:
     return str(answer)
 
 
+# How many top-ranked picks get AI narrative analysis (the full ranked list in
+# the slide-out panel is heuristic-scored only beyond this).
+AI_ANALYSIS_TOP_N = 10
+
+
+def _plan_picks(parsed: dict, jobs: list, answers: dict | None) -> list[dict]:
+    """Every posting scored + ranked (the panel shows the full ordered list)."""
+    return score_jobs(parsed, jobs, answers or {}, top_n=len(jobs) or 1)
+
+
 def _analysis_cache_key(picks: list[dict], answers: dict | None, model: str | None) -> str:
     basis = json.dumps(
         {
@@ -953,7 +994,8 @@ def recommendations(search_id: int):
     answers = plan_store.load_answers(search_id)
     answered = answers is not None
 
-    picks = score_jobs(parsed, jobs, answers or {})
+    picks = _plan_picks(parsed, jobs, answers)
+    ai_picks = picks[:AI_ANALYSIS_TOP_N]
     certs = analyze_certifications(parsed, jobs)
     tips = build_resume_tips(parsed, cert_analysis=certs) if parsed else []
 
@@ -967,14 +1009,14 @@ def recommendations(search_id: int):
     overall_analysis = None
     regen = request.args.get("regen") == "1"
     ai_pending = False
-    if ai_configured and picks:
+    if ai_configured and ai_picks:
         cached = None if regen else _load_cached_analysis(
-            search_id, _analysis_cache_key(picks, answers, model)
+            search_id, _analysis_cache_key(ai_picks, answers, model)
         )
         if cached:
             overall_analysis = cached.get("overall")
             per_index = cached.get("per_index") or {}
-            for i, pick in enumerate(picks):
+            for i, pick in enumerate(ai_picks):
                 pick["ai_analysis"] = per_index.get(str(i))
             ai_status["used"] = True
             ai_status["model"] = cached.get("model") or model
@@ -1001,6 +1043,8 @@ def recommendations(search_id: int):
         contact_name=search_row.get("username"),
         total_jobs=len(jobs),
         picks=picks,
+        top_picks=picks[:3],
+        saved_keys=_saved_keys(),
         certs=certs,
         tips=tips,
         answered=answered,
@@ -1027,12 +1071,173 @@ def recommendations_ai(search_id: int):
     jobs = dedupe_cross_board(db.get_jobs_for_search(search_id))
     parsed, _ = _resume_for_search(search_row)
     answers = plan_store.load_answers(search_id)
-    picks = score_jobs(parsed, jobs, answers or {})
+    ai_picks = _plan_picks(parsed, jobs, answers)[:AI_ANALYSIS_TOP_N]
     result = _run_analysis(
-        search_id, parsed, picks, answers,
+        search_id, parsed, ai_picks, answers,
         regen=request.args.get("regen") == "1",
     )
     return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Job + company detail page
+# ---------------------------------------------------------------------------
+def _find_job_in_search(search_id: int, dedup_key: str) -> Optional[dict]:
+    jobs = dedupe_cross_board(db.get_jobs_for_search(search_id))
+    return next((j for j in jobs if j.get("dedup_key") == dedup_key), None)
+
+
+def _company_postings(company: Optional[str], exclude_key: Optional[str]) -> list[dict]:
+    """Other stored postings from the same company (deduped, current one removed)."""
+    if not company:
+        return []
+    try:
+        rows = dedupe_cross_board(db.jobs_by_company(current_user()["id"], company))
+    except Exception:
+        return []
+    return [j for j in rows if j.get("dedup_key") != exclude_key][:10]
+
+
+@app.route("/job/<int:search_id>/<dedup_key>")
+@login_required
+def job_detail(search_id: int, dedup_key: str):
+    """Dedicated page for one posting: full details + company background.
+
+    Renders instantly from stored data; the company info (Wikipedia + optional
+    AI overview) is fetched by the page afterwards so nothing here waits on the
+    network or a model.
+    """
+    search_row = _load_search_or_404(search_id)
+    _require_owned_search(search_row)
+    job = _find_job_in_search(search_id, dedup_key)
+    if job is None:
+        abort(404, description="That posting isn't in this search anymore.")
+
+    return render_template(
+        "job_detail.html",
+        job=job,
+        company_jobs=_company_postings(job.get("company"), dedup_key),
+        saved=dedup_key in _saved_keys(),
+        search_id=search_id,
+        dedup_key=dedup_key,
+        saved_id=None,
+        resume_id=search_row.get("resume_id"),
+        back_url=url_for("recommendations", search_id=search_id),
+        back_label="Back to your career plan",
+        info_query=f"search_id={search_id}&key={dedup_key}",
+    )
+
+
+@app.route("/tracker/job/<int:saved_id>")
+@login_required
+def tracker_job_detail(saved_id: int):
+    """The same detail page, reached from the application tracker."""
+    row = db.get_saved_job(current_user()["id"], saved_id)
+    if row is None:
+        abort(404, description="No saved job with that id.")
+    job = dict(row)
+    job.setdefault("job_url", row.get("job_url"))
+
+    return render_template(
+        "job_detail.html",
+        job=job,
+        company_jobs=_company_postings(job.get("company"), job.get("dedup_key")),
+        saved=True,
+        search_id=None,
+        dedup_key=job.get("dedup_key"),
+        saved_id=saved_id,
+        resume_id=None,
+        back_url=url_for("saved_jobs_page"),
+        back_label="Back to your application tracker",
+        info_query=f"saved_id={saved_id}",
+    )
+
+
+@app.route("/api/company-info")
+@login_required
+def api_company_info():
+    """Company background for the detail page, fetched after the page renders.
+
+    ``part=basic`` → the non-AI Wikipedia summary (fast, cached).
+    ``part=ai``    → the AI overview grounded in the collected data (slow,
+                     cached per company+model; empty when no model is up).
+    The job is identified server-side (search_id+key or saved_id) so the model
+    never receives client-supplied text.
+    """
+    search_id = request.args.get("search_id", type=int)
+    key = request.args.get("key")
+    saved_id = request.args.get("saved_id", type=int)
+
+    job = None
+    if search_id and key:
+        search_row = _load_search_or_404(search_id)
+        _require_owned_search(search_row)
+        job = _find_job_in_search(search_id, key)
+    elif saved_id:
+        job = db.get_saved_job(current_user()["id"], saved_id)
+    if job is None:
+        abort(404, description="Posting not found.")
+    company = (job.get("company") or "").strip()
+    if not company:
+        return jsonify({"company": None, "wiki": None, "ai": None})
+
+    part = request.args.get("part", "basic")
+    if part == "basic":
+        wiki = company_info.wikipedia_summary(company)
+        return jsonify({"company": company, "wiki": wiki})
+
+    # part=ai — grounded overview, cached per company + model.
+    ai_settings = load_settings()
+    model = configured_model(ai_settings)
+    if not is_configured(ai_settings):
+        return jsonify({"company": company, "ai": None, "safe_mode": True})
+
+    cached = company_info.cached_company(company)
+    ai_by_model = cached.get("ai") or {}
+    if model in ai_by_model:
+        return jsonify({"company": company, "ai": ai_by_model[model], "model": model})
+
+    wiki = cached.get("wiki") or company_info.wikipedia_summary(company)
+    try:
+        text = generate_company_overview(
+            ai_settings, company,
+            posting_text=job.get("description"),
+            wiki_extract=(wiki or {}).get("extract") if wiki else None,
+        )
+    except AIClientError as exc:
+        return jsonify({"company": company, "ai": None, "error": str(exc)})
+    ai_by_model[model] = text
+    company_info.update_cached_company(company, ai=ai_by_model)
+    return jsonify({"company": company, "ai": text, "model": model})
+
+
+@app.route("/company/search", methods=["POST"])
+@login_required
+def company_jobs_search():
+    """Queue a live board search for more postings from one company."""
+    search_id = request.form.get("search_id", type=int)
+    company = (request.form.get("company") or "").strip()
+    search_row = _load_search_or_404(search_id) if search_id else None
+    if search_row is None or not company:
+        abort(400, description="Missing company or search context.")
+    _require_owned_search(search_row)
+    resume_id = search_row.get("resume_id")
+    if not resume_id:
+        abort(400, description="This search has no resume to base a company search on.")
+
+    params = {
+        "keywords": [company[:80]],
+        "location": search_row.get("location"),
+        "work_type": "any",
+        "country": _default_country(),
+        "sites": list(DEFAULT_SITES),
+    }
+    try:
+        job_id = db.enqueue_scrape(current_user()["id"], resume_id, params)
+        return redirect(url_for("scrape_status", job_id=job_id))
+    except Exception:
+        parsed = db.get_resume_json(resume_id) or {}
+        return _run_search_sync(resume_id, parsed, params)
 
 
 # ---------------------------------------------------------------------------
@@ -1059,6 +1264,12 @@ def saved_add():
         flash(f"Saved “{job.get('title') or 'posting'}” to your tracker.", "info")
     except Exception as exc:
         flash(f"Could not save that job: {exc}", "error")
+
+    # Return wherever the save came from (matches, plan, or detail page) —
+    # local paths only, so this can't be used as an open redirect.
+    dest = request.form.get("next")
+    if dest and dest.startswith("/"):
+        return redirect(dest)
     return redirect(url_for("matches", search_id=search_id) + "#job-" + dedup_key)
 
 

@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title or 'Job posting' }} — Career Nexus{% endblock %}
+
+{% block content %}
+  <p class="nav" style="margin-bottom:.4rem;"><a href="{{ back_url }}">← {{ back_label }}</a></p>
+  <h1>{{ job.title or 'Untitled posting' }}</h1>
+  <p class="sub"><strong>{{ job.company or 'Unknown company' }}</strong>
+    {% if job.location %} · {{ job.location }}{% endif %}</p>
+
+  <div class="card">
+    <div class="job-head">
+      <div>
+        <div style="margin:.1rem 0 .6rem;">
+          {% if job.salary_display %}<span class="badge salary">{{ job.salary_display }}</span>{% endif %}
+          <span class="badge {{ 'remote' if job.is_remote }}">{{ 'Remote' if job.is_remote else 'On-site / local' }}</span>
+          {% if job.job_type %}<span class="badge">{{ job.job_type }}</span>{% endif %}
+          {% if job.source_site %}<span class="badge">via {{ job.source_site }}</span>{% endif %}
+          {% if job.also_on %}<span class="badge">also on {{ job.also_on | join(', ') }}</span>{% endif %}
+          {% if job.date_posted %}<span class="badge">Posted {{ job.date_posted }}</span>{% endif %}
+          {% if job.status %}<span class="badge">Tracker: {{ job.status }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="job-actions">
+        {% if job.job_url %}
+          <a class="btn" href="{{ job.job_url }}" target="_blank" rel="noopener">View original posting ↗</a>
+        {% endif %}
+        {% if saved %}
+          <span class="saved-chip">✓ In your tracker</span>
+        {% elif search_id and dedup_key %}
+          <form method="post" action="{{ url_for('saved_add') }}">
+            <input type="hidden" name="search_id" value="{{ search_id }}" />
+            <input type="hidden" name="dedup_key" value="{{ dedup_key }}" />
+            <input type="hidden" name="next" value="{{ request.path }}" />
+            <button class="btn secondary" type="submit">☆ Save to tracker</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if job.description %}
+      <h2 style="margin-top:1rem;">Job description</h2>
+      <div class="desc-full">{{ job.description }}</div>
+    {% else %}
+      <p class="empty">No description was captured for this posting — open the original
+        posting for the full text.</p>
+    {% endif %}
+    {% if search_id and resume_id and dedup_key %}
+      <div class="actions">
+        <a class="btn secondary" href="{{ url_for('tailor', search_id=search_id, dedup_key=dedup_key) }}">✎ Tailor my resume for this job</a>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- Company background: filled in AFTER page load (Wikipedia, then AI). -->
+  <div class="card">
+    <h2>About {{ job.company or 'this company' }}</h2>
+    {% if job.company %}
+      <div id="company-basic">
+        <p class="jobmeta"><span class="spin-inline"></span> Looking up company information…</p>
+      </div>
+      <div id="company-ai" style="margin-top:.8rem;"></div>
+    {% else %}
+      <p class="empty">This posting didn't include a company name, so there's nothing to look up.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>More jobs at {{ job.company or 'this company' }}</h2>
+    {% if company_jobs %}
+      <p class="sub" style="font-size:.87rem;">From your stored searches (all boards, deduplicated):</p>
+      {% for other in company_jobs %}
+        <div class="panel-row">
+          <div class="panel-row-head">
+            <span class="panel-row-title">
+              {% if other.job_url %}<a href="{{ other.job_url }}" target="_blank" rel="noopener">{{ other.title or 'Untitled posting' }}</a>
+              {% else %}{{ other.title or 'Untitled posting' }}{% endif %}
+            </span>
+          </div>
+          <div class="pick-co">{{ other.location or '' }}
+            {% if other.source_site %} · via {{ other.source_site }}{% endif %}
+            {% if other.date_posted %} · posted {{ other.date_posted }}{% endif %}
+            {% if other.search_id %} · <a href="{{ url_for('job_detail', search_id=other.search_id, dedup_key=other.dedup_key) }}">details</a>{% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="empty">No other postings from this company in your stored searches yet.</p>
+    {% endif %}
+    {% if search_id and resume_id and job.company %}
+      <form method="post" action="{{ url_for('company_jobs_search') }}" style="margin-top:.8rem;">
+        <input type="hidden" name="search_id" value="{{ search_id }}" />
+        <input type="hidden" name="company" value="{{ job.company }}" />
+        <button class="btn secondary" type="submit">🔍 Search the job boards for more {{ job.company }} jobs</button>
+      </form>
+      <div class="hint" style="margin-top:.4rem;">Runs a live board search in the background —
+        you'll land on a progress page, then the results.</div>
+    {% endif %}
+  </div>
+{% endblock %}
+
+{% block scripts %}
+{% if job.company %}
+<script>
+  // Company info loads after the page renders — never blocks navigation.
+  (async function () {
+    const basic = document.getElementById('company-basic');
+    const aiBox = document.getElementById('company-ai');
+
+    // 1) Non-AI (Wikipedia) first — fast, reliable when available.
+    try {
+      const resp = await fetch('/api/company-info?part=basic&{{ info_query }}');
+      const data = await resp.json();
+      if (data.wiki && data.wiki.extract) {
+        let html = '';
+        if (data.wiki.description) {
+          html += '<p class="jobmeta" style="margin:0 0 .35rem;">' + data.wiki.description + '</p>';
+        }
+        html += '<p style="margin:0;">' + data.wiki.extract + '</p>';
+        if (data.wiki.url) {
+          html += '<p class="hint" style="margin-top:.4rem;">Source: <a href="' + data.wiki.url +
+                  '" target="_blank" rel="noopener">Wikipedia</a></p>';
+        }
+        basic.innerHTML = html;
+      } else {
+        basic.innerHTML = '<p class="empty">No reliable public profile found for this company ' +
+          '(smaller and local employers often don\'t have one).</p>';
+      }
+    } catch (err) {
+      basic.innerHTML = '<p class="empty">Company lookup failed: ' + err + '</p>';
+    }
+
+    // 2) AI overview (grounded in the collected data) — slow, shown when ready.
+    try {
+      const resp = await fetch('/api/company-info?part=ai&{{ info_query }}');
+      const data = await resp.json();
+      if (data.ai) {
+        aiBox.innerHTML = '<div class="ai-analysis">🤖 <strong>AI overview' +
+          (data.model ? ' (' + data.model + ')' : '') + ':</strong> <span></span></div>';
+        aiBox.querySelector('span').textContent = data.ai;
+      }
+      // safe_mode / errors: silently omit — the non-AI info above stands alone.
+    } catch (err) { /* AI section is best-effort */ }
+  })();
+</script>
+{% endif %}
+{% endblock %}

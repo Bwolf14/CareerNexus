@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}Career Nexus{% endblock %}</title>
   <link rel="icon" href="data:image/svg+xml,{{ '<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%2338bdf8%22/><text x=%2250%22 y=%2268%22 font-size=%2252%22 text-anchor=%22middle%22 font-family=%22system-ui%22 font-weight=%22800%22 fill=%22%2304293a%22>CN</text></svg>' }}" />
+  <script>
+    // Apply the saved theme before first paint (no flash of the wrong mode).
+    (function () {
+      var t = localStorage.getItem('cn-theme');
+      if (t) document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   {% block head %}{% endblock %}
 </head>
@@ -19,7 +26,7 @@
       <div class="links">
         {% if current_user %}
           <a href="/">New session</a>
-          <a href="{{ url_for('saved_jobs_page') }}">Saved jobs</a>
+          <a href="{{ url_for('saved_jobs_page') }}">Job application tracker</a>
           <a href="{{ url_for('alerts_page') }}">Alerts</a>
           <a href="{{ url_for('account') }}">Account</a>
           <span class="who">{{ current_user.first_name or current_user.email }}</span>
@@ -30,6 +37,8 @@
           <a href="{{ url_for('login') }}">Log in</a>
           <a href="{{ url_for('register') }}">Sign up</a>
         {% endif %}
+        <button class="theme-btn" id="theme-toggle" type="button"
+                title="Switch between light and dark mode">◐</button>
       </div>
     </nav>
 
@@ -66,6 +75,15 @@
       <span>Live postings via JobSpy.</span>
     </footer>
   </div>
+  <script>
+    // Light/dark toggle — persists across pages via localStorage.
+    document.getElementById('theme-toggle').addEventListener('click', function () {
+      var root = document.documentElement;
+      var next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+      root.setAttribute('data-theme', next);
+      localStorage.setItem('cn-theme', next);
+    });
+  </script>
   {% block scripts %}{% endblock %}
 </body>
 </html>
