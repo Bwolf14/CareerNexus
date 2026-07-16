@@ -1,0 +1,42 @@
+{% extends "admin_base.html" %}
+{% block title %}Dashboard — Career Nexus Admin{% endblock %}
+
+{% block content %}
+  <h1>Dashboard</h1>
+  <p class="sub">Overview of the Career Nexus deployment.</p>
+
+  {% if db_error %}
+    <div class="banner error">Could not reach the database: {{ db_error }}</div>
+  {% else %}
+    <div class="howitworks" style="grid-template-columns: repeat(4, 1fr);">
+      <div class="step">
+        <span class="n">USERS</span>
+        <h3 style="font-size:1.8rem; margin:.2rem 0 0;">{{ stats.users }}</h3>
+        <p>registered accounts</p>
+      </div>
+      <div class="step">
+        <span class="n">ADMINS</span>
+        <h3 style="font-size:1.8rem; margin:.2rem 0 0;">{{ stats.admins }}</h3>
+        <p>with admin rights</p>
+      </div>
+      <div class="step">
+        <span class="n">RESUMES</span>
+        <h3 style="font-size:1.8rem; margin:.2rem 0 0;">{{ stats.resumes }}</h3>
+        <p>parsed &amp; stored</p>
+      </div>
+      <div class="step">
+        <span class="n">SEARCHES</span>
+        <h3 style="font-size:1.8rem; margin:.2rem 0 0;">{{ stats.searches }}</h3>
+        <p>job searches run</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Manage</h2>
+      <div class="actions">
+        <a class="btn" href="{{ url_for('users') }}">View &amp; search users</a>
+        <a class="btn secondary" href="{{ url_for('settings') }}">AI &amp; email settings</a>
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}

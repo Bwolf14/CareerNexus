@@ -94,8 +94,9 @@ become healthy before serving. Connect a client like DBeaver to
 `localhost:3306` (database `careernexus_db`) to browse the stored data.
 
 > **Upgrading an existing database:** [`init.sql`](init.sql) only runs on a
-> *fresh* data volume, and this version adds several tables (accounts/consent
-> columns, `password_resets`, `auth_throttle`, `saved_jobs`, `scrape_jobs`,
+> *fresh* data volume, and this version adds several tables and columns
+> (consent + `first_name`/`last_name`/`is_admin` on `users`, `app_settings`,
+> `password_resets`, `auth_throttle`, `saved_jobs`, `scrape_jobs`,
 > `saved_searches`) plus `career_plans`. If you already have a `db_data` volume
 > from an earlier version, either reset it with `docker compose down -v` (wipes
 > stored data) or replay the schema once with
@@ -106,6 +107,7 @@ become healthy before serving. Connect a client like DBeaver to
 | Service  | Image / build  | Port  | Notes                                      |
 | -------- | -------------- | ----- | ------------------------------------------ |
 | `web`    | `./Dockerfile` | 8000  | Flask + gunicorn guided flow (healthcheck on `/health`) |
+| `admin`  | `./Dockerfile` | 8001  | separate admin portal (login, users, settings) |
 | `worker` | `./Dockerfile` | —     | background scrape queue + scheduled job alerts |
 | `db`     | `mariadb:10.6` | 3306  | schema from `init.sql`, data in a volume   |
 
@@ -114,7 +116,8 @@ Running the web app outside Docker (for development):
 ```bash
 pip install -r requirements-web.txt
 DB_HOST=127.0.0.1 SCRAPE_ASYNC=0 python -m webapp.app    # http://localhost:8000
-python -m webapp.worker                                  # (separate shell) queue + alerts
+DB_HOST=127.0.0.1 python -m webapp.admin_app             # http://localhost:8001 (admin)
+DB_HOST=127.0.0.1 python -m webapp.worker                # (separate shell) queue + alerts
 ```
 
 DB connection settings are read from the `DB_HOST`, `DB_PORT`, `DB_NAME`,
@@ -122,12 +125,29 @@ DB connection settings are read from the `DB_HOST`, `DB_PORT`, `DB_NAME`,
 `docker-compose.yml`). Outside Docker you can set `SCRAPE_ASYNC=0` to scrape
 inline in the web request and skip running the worker.
 
+### Admin portal (separate port)
+
+A separate admin app runs on **<http://localhost:8001>** (the `admin` service).
+Default login **`admin` / `admin`**, bootstrapped on first start (change the
+`ADMIN_USERNAME` / `ADMIN_PASSWORD` env vars — and promote a real account —
+before exposing it). From the portal an admin can:
+
+* see the **total number of registered users** (plus resume/search counts),
+* **browse and search all accounts** by name or email, and **promote/demote
+  admins** (a promoted user logs into the portal with their own email + password),
+* configure the **AI (Ollama)** connection and the **email / SMTP** settings —
+  these moved out of the user UI entirely and now live only here (stored in the
+  `app_settings` table + AI settings file, read by the web app and worker).
+
+> Because the portal and the user app share a host, they use separate session
+> cookies; keep port 8001 firewalled to trusted machines.
+
 ### Accounts, tracker, and alerts
 
-* **Accounts** — register with email + password (a required consent checkbox
-  gates account creation). Forgotten passwords are reset via a one-time link;
-  repeated failed logins are rate-limited. Manage or delete your account (and
-  export all your data as JSON) at `/account`.
+* **Accounts** — register with **first name, last name**, email + password (a
+  required consent checkbox gates account creation). Forgotten passwords are
+  reset via a one-time link; repeated failed logins are rate-limited. Manage or
+  delete your account (and export all your data as JSON) at `/account`.
 * **Application tracker** (`/saved`) — hit **Save** on any posting to bookmark
   it, then move it through *Interested → Applied → Interviewing → Offer /
   Rejected* and jot notes.

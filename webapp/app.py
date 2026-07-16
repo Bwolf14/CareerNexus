@@ -61,11 +61,8 @@ from ai_client import (
     generate_questions,
     generate_resume_tailoring,
     load_settings,
-    normalize_base_url,
-    save_settings,
-    test_connection,
 )
-from ai_client.settings import is_configured, settings_path
+from ai_client.settings import is_configured
 from job_matcher import (
     analyze_certifications,
     build_questions,
@@ -254,13 +251,20 @@ def register():
         return redirect(url_for("index"))
 
     if request.method == "POST":
+        first_name = (request.form.get("first_name") or "").strip()
+        last_name = (request.form.get("last_name") or "").strip()
         email = (request.form.get("email") or "").strip()
         password = request.form.get("password") or ""
         confirm = request.form.get("confirm") or ""
         consent = bool(request.form.get("consent"))
 
+        form = {"first_name": first_name, "last_name": last_name,
+                "email": email, "consent": consent}
+
         error = None
-        if "@" not in email or "." not in email.split("@")[-1]:
+        if not first_name or not last_name:
+            error = "Enter your first and last name."
+        elif "@" not in email or "." not in email.split("@")[-1]:
             error = "Enter a valid email address."
         elif len(password) < MIN_PASSWORD_LEN:
             error = f"Password must be at least {MIN_PASSWORD_LEN} characters."
@@ -275,7 +279,10 @@ def register():
 
         if error is None:
             try:
-                user_id = db.create_user(email, auth.hash_password(password), consent)
+                user_id = db.create_user(
+                    email, auth.hash_password(password), consent,
+                    first_name=first_name, last_name=last_name,
+                )
             except ValueError as exc:
                 error = str(exc)
             except Exception as exc:
@@ -283,13 +290,15 @@ def register():
 
         if error is not None:
             flash(error, "error")
-            return render_template("register.html", email=email, consent=consent), 400
+            return render_template("register.html", **form), 400
 
         auth.login_user(user_id)
         flash("Account created — welcome to Career Nexus.", "info")
         return redirect(url_for("index"))
 
-    return render_template("register.html", email="", consent=False)
+    return render_template(
+        "register.html", first_name="", last_name="", email="", consent=False
+    )
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -1150,57 +1159,8 @@ def tailor(search_id: int, dedup_key: str):
     )
 
 
-# ---------------------------------------------------------------------------
-# AI settings (Ollama / any OpenAI-compatible server)
-# ---------------------------------------------------------------------------
-@app.route("/settings", methods=["GET", "POST"])
-@login_required
-def settings_page():
-    if request.method == "POST":
-        submitted = {
-            "enabled": bool(request.form.get("enabled")),
-            "base_url": (request.form.get("base_url") or "").strip(),
-            "model": (request.form.get("model") or "").strip(),
-            "connect_timeout": request.form.get("connect_timeout") or 4,
-            "read_timeout": request.form.get("read_timeout") or 180,
-        }
-        error = None
-        if submitted["enabled"] and not normalize_base_url(submitted["base_url"]):
-            error = "Enter the AI server address before enabling AI features."
-        elif submitted["enabled"] and not submitted["model"]:
-            error = (
-                "Pick a model before enabling AI features — use “Test connection” "
-                "to list what the server has installed."
-            )
-        if error:
-            flash(error, "error")
-            current = {**load_settings(), **submitted}
-            return render_template(
-                "settings.html", s=current, settings_file=settings_path()
-            ), 400
-
-        save_settings(submitted)
-        flash("AI settings saved.", "info")
-        return redirect(url_for("settings_page"))
-
-    return render_template(
-        "settings.html", s=load_settings(), settings_file=settings_path()
-    )
-
-
-@app.route("/api/ai/test", methods=["POST"])
-@login_required
-def api_ai_test():
-    """Probe an AI server (address from the request body, not saved settings).
-
-    Powers the settings page's Test button, so users can verify a URL before
-    saving it. Returns ``{ok, latency_ms, models, error, normalized_url}``.
-    """
-    data = request.get_json(silent=True) or {}
-    base = normalize_base_url(data.get("base_url") or "")
-    result = test_connection({"base_url": base, "connect_timeout": 4.0})
-    result["normalized_url"] = base
-    return jsonify(result)
+# AI/Ollama and email settings live in the separate admin portal
+# (webapp/admin_app.py, served on its own port) — not exposed to normal users.
 
 
 # ---------------------------------------------------------------------------

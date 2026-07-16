@@ -21,9 +21,22 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
     consent_data_collection BOOLEAN NOT NULL DEFAULT FALSE,
     consent_at TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Admin-editable application settings (AI, email/SMTP, job-search defaults),
+-- set from the admin portal and read by the web app + worker. Simple key/value
+-- so new settings don't need a migration. A NULL/absent value falls back to the
+-- corresponding environment variable.
+CREATE TABLE IF NOT EXISTS app_settings (
+    setting_key VARCHAR(64) PRIMARY KEY,
+    setting_value TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
 -- ---------------------------------------------------------------------------

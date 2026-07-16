@@ -9,10 +9,22 @@
 
       <form method="post" action="{{ url_for('register') }}">
         <div class="formgrid">
+          <div class="row2">
+            <div>
+              <label class="field-label" for="first_name">First name</label>
+              <input type="text" id="first_name" name="first_name" value="{{ first_name or '' }}"
+                     autocomplete="given-name" required autofocus />
+            </div>
+            <div>
+              <label class="field-label" for="last_name">Last name</label>
+              <input type="text" id="last_name" name="last_name" value="{{ last_name or '' }}"
+                     autocomplete="family-name" required />
+            </div>
+          </div>
           <div>
             <label class="field-label" for="email">Email</label>
             <input type="email" id="email" name="email" value="{{ email or '' }}"
-                   autocomplete="email" required autofocus />
+                   autocomplete="email" required />
           </div>
           <div>
             <label class="field-label" for="password">Password
