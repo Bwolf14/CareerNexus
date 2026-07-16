@@ -1,0 +1,63 @@
+{% extends "admin_base.html" %}
+{% block title %}Users — Career Nexus Admin{% endblock %}
+
+{% block content %}
+  <h1>Users</h1>
+  <p class="sub">All registered accounts. Search by name or email, and grant or
+     revoke admin rights.</p>
+
+  <div class="card">
+    <form method="get" action="{{ url_for('users') }}">
+      <div style="display:flex; gap:.6rem; flex-wrap:wrap;">
+        <input type="text" name="q" value="{{ q or '' }}"
+               placeholder="Search by name or email…" style="max-width:340px;" />
+        <button class="btn" type="submit">Search</button>
+        {% if q %}<a class="btn ghost" href="{{ url_for('users') }}">Clear</a>{% endif %}
+      </div>
+    </form>
+
+    {% if db_error %}
+      <div class="banner error" style="margin-top:1rem;">Could not reach the database: {{ db_error }}</div>
+    {% elif users %}
+      <div class="tablewrap" style="margin-top:1rem;">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for u in users %}
+            <tr>
+              <td>{{ u.id }}</td>
+              <td>{{ (u.first_name or '') ~ ' ' ~ (u.last_name or '') if (u.first_name or u.last_name) else u.username }}</td>
+              <td>{{ u.email }}</td>
+              <td>
+                {% if u.is_admin %}<span class="src live">admin</span>
+                {% else %}<span class="src sample">user</span>{% endif %}
+              </td>
+              <td class="jobmeta">{{ u.created_at }}</td>
+              <td style="white-space:nowrap;">
+                <form method="post"
+                      action="{{ url_for('set_admin', user_id=u.id, q=q) }}"
+                      style="display:inline;">
+                  {% if u.is_admin %}
+                    <input type="hidden" name="is_admin" value="0" />
+                    <button class="logout-btn" type="submit">Revoke admin</button>
+                  {% else %}
+                    <input type="hidden" name="is_admin" value="1" />
+                    <button class="logout-btn" type="submit" style="color:var(--ok);">Make admin</button>
+                  {% endif %}
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="jobmeta" style="margin-top:.8rem;">{{ users | length }} account(s) shown.</p>
+    {% else %}
+      <p class="empty" style="margin-top:1rem;">
+        {% if q %}No accounts match “{{ q }}”.{% else %}No accounts yet.{% endif %}
+      </p>
+    {% endif %}
+  </div>
+{% endblock %}

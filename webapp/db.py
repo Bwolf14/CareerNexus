@@ -87,16 +87,24 @@ def _unique_username(cur, base: str) -> str:
     return f"user-{uuid.uuid4().hex[:8]}"
 
 
-def create_user(email: str, password_hash: str, consent: bool) -> int:
+def create_user(
+    email: str,
+    password_hash: str,
+    consent: bool,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
+) -> int:
     """Create a registered account; return its id.
 
     Raises ``ValueError`` if the email is already registered. ``consent`` records
     the user's agreement to sensitive-data collection (the web layer refuses to
     call this without it). Degrades gracefully on databases whose ``users`` table
-    predates the consent columns.
+    predates the newer columns.
     """
     email = (email or "").strip()[:255]
     username_base = email.split("@")[0] if "@" in email else email
+    first_name = (first_name or None) and first_name.strip()[:100]
+    last_name = (last_name or None) and last_name.strip()[:100]
 
     conn = get_connection()
     try:
@@ -111,15 +119,16 @@ def create_user(email: str, password_hash: str, consent: bool) -> int:
                 cur.execute(
                     """
                     INSERT INTO users
-                        (username, email, password_hash,
+                        (username, email, password_hash, first_name, last_name,
                          consent_data_collection, consent_at)
-                    VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                     """,
-                    (username, email, password_hash, bool(consent)),
+                    (username, email, password_hash, first_name, last_name,
+                     bool(consent)),
                 )
             except pymysql.err.OperationalError as exc:
-                # Column doesn't exist on a DB initialised before the consent
-                # columns were added — fall back to the base insert.
+                # Column doesn't exist on a DB initialised before these columns
+                # were added — fall back to the base insert.
                 if exc.args and exc.args[0] == 1054:
                     cur.execute(
                         "INSERT INTO users (username, email, password_hash) "
@@ -131,6 +140,229 @@ def create_user(email: str, password_hash: str, consent: bool) -> int:
             user_id = cur.lastrowid
         conn.commit()
         return user_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Admin: default admin bootstrap, user administration, app settings
+# ---------------------------------------------------------------------------
+def get_admin_by_login(identifier: str) -> Optional[dict[str, Any]]:
+    """Fetch an admin account by username OR email (for the admin portal login).
+
+    Returns id, username, email, password_hash, is_admin — only when is_admin is
+    true. None otherwise.
+    """
+    identifier = (identifier or "").strip()[:255]
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, username, email, password_hash, is_admin FROM users "
+                "WHERE is_admin = TRUE AND (email = %s OR username = %s) LIMIT 1",
+                (identifier, identifier),
+            )
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def is_user_admin(user_id: int) -> bool:
+    """True if the given account still has admin rights."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT is_admin FROM users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+            return bool(row and row["is_admin"])
+    finally:
+        conn.close()
+
+
+def ensure_default_admin(username: str, email: str, password_hash: str) -> None:
+    """Create the bootstrap admin account if no admin exists yet.
+
+    Idempotent: does nothing once any admin is present (so a promoted user or a
+    changed password isn't clobbered on restart).
+    """
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE is_admin = TRUE LIMIT 1")
+            if cur.fetchone():
+                conn.commit()
+                return
+            # Reuse an existing row with the same username/email if present.
+            cur.execute(
+                "SELECT id FROM users WHERE username = %s OR email = %s LIMIT 1",
+                (username, email),
+            )
+            existing = cur.fetchone()
+            if existing:
+                cur.execute(
+                    "UPDATE users SET is_admin = TRUE WHERE id = %s", (existing["id"],)
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO users
+                        (username, email, password_hash, is_admin,
+                         consent_data_collection, consent_at)
+                    VALUES (%s, %s, %s, TRUE, TRUE, CURRENT_TIMESTAMP)
+                    """,
+                    (username, email, password_hash),
+                )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def count_users() -> int:
+    """Total number of registered accounts."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS n FROM users")
+            return int(cur.fetchone()["n"])
+    finally:
+        conn.close()
+
+
+def count_admins() -> int:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS n FROM users WHERE is_admin = TRUE")
+            return int(cur.fetchone()["n"])
+    finally:
+        conn.close()
+
+
+def list_all_users(search: Optional[str] = None, limit: int = 500) -> list[dict[str, Any]]:
+    """All accounts (id, name, email, admin flag, created_at), newest first.
+
+    ``search`` filters by a case-insensitive substring of email, first/last
+    name, or username.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            if search:
+                like = f"%{search.strip()}%"
+                cur.execute(
+                    """
+                    SELECT id, username, email, first_name, last_name, is_admin,
+                           created_at
+                    FROM users
+                    WHERE email LIKE %s OR username LIKE %s
+                          OR first_name LIKE %s OR last_name LIKE %s
+                          OR CONCAT(COALESCE(first_name,''), ' ',
+                                    COALESCE(last_name,'')) LIKE %s
+                    ORDER BY id DESC LIMIT %s
+                    """,
+                    (like, like, like, like, like, limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, username, email, first_name, last_name, is_admin,
+                           created_at
+                    FROM users ORDER BY id DESC LIMIT %s
+                    """,
+                    (limit,),
+                )
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def set_user_admin(user_id: int, is_admin: bool) -> bool:
+    """Grant or revoke admin rights on an account. Returns False if not found."""
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET is_admin = %s WHERE id = %s",
+                (bool(is_admin), user_id),
+            )
+            changed = cur.rowcount
+        conn.commit()
+        return changed > 0
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_app_setting(key: str) -> Optional[str]:
+    """A single admin-set application setting value, or None if unset.
+
+    Best-effort: returns None if the DB is unreachable or the table doesn't
+    exist yet (pre-migration), so callers fall back to environment defaults.
+    """
+    try:
+        conn = get_connection()
+    except Exception:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT setting_value FROM app_settings WHERE setting_key = %s", (key,)
+            )
+            row = cur.fetchone()
+            return row["setting_value"] if row else None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def get_all_app_settings() -> dict[str, str]:
+    """All admin-set settings as a dict (empty if none / DB down / table missing)."""
+    try:
+        conn = get_connection()
+    except Exception:
+        return {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT setting_key, setting_value FROM app_settings")
+            return {r["setting_key"]: r["setting_value"] for r in cur.fetchall()}
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+def set_app_settings(values: dict[str, Any]) -> None:
+    """Upsert a batch of application settings (value None deletes the key)."""
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            for key, value in values.items():
+                if value is None:
+                    cur.execute(
+                        "DELETE FROM app_settings WHERE setting_key = %s", (key[:64],)
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO app_settings (setting_key, setting_value)
+                        VALUES (%s, %s)
+                        ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+                        """,
+                        (key[:64], str(value)),
+                    )
+        conn.commit()
     except Exception:
         conn.rollback()
         raise
@@ -154,12 +386,14 @@ def get_user_by_email(email: str) -> Optional[dict[str, Any]]:
 
 
 def get_user_by_id(user_id: int) -> Optional[dict[str, Any]]:
-    """Fetch an account by id (id, username, email), or None."""
+    """Fetch an account by id (id, username, email, names, admin flag), or None."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, username, email FROM users WHERE id = %s", (user_id,)
+                "SELECT id, username, email, first_name, last_name, is_admin "
+                "FROM users WHERE id = %s",
+                (user_id,),
             )
             return cur.fetchone()
     finally:

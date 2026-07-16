@@ -24,26 +24,44 @@ import logging
 import os
 import smtplib
 from email.message import EmailMessage
+from typing import Optional
+
+from . import db
 
 log = logging.getLogger("careernexus.email")
 
 
+def _setting(db_key: str, env_key: str, default: Optional[str] = None) -> Optional[str]:
+    """An email setting: admin-set value (DB) first, then env var, then default.
+
+    DB access is best-effort — :func:`db.get_app_setting` returns None if the
+    table is missing or the DB is unreachable, so config always falls back to
+    environment variables.
+    """
+    value = db.get_app_setting(db_key)
+    if value is not None and str(value).strip() != "":
+        return value
+    return os.environ.get(env_key, default)
+
+
 def _from_addr() -> str:
-    return os.environ.get("SMTP_FROM", "no-reply@careernexus.local")
+    return _setting("smtp_from", "SMTP_FROM", "no-reply@careernexus.local")
 
 
 def base_url() -> str:
     """Absolute base URL for links embedded in emails."""
-    return os.environ.get("APP_BASE_URL", "http://localhost:8000").rstrip("/")
+    return (_setting("app_base_url", "APP_BASE_URL", "http://localhost:8000")
+            or "http://localhost:8000").rstrip("/")
 
 
 def send_email(to: str, subject: str, body: str) -> bool:
     """Send (or log) a plain-text email. Returns True on success.
 
-    With no ``SMTP_HOST`` configured this logs the message and returns True, so
-    the reset/alert flows work end-to-end in the demo without a mail server.
+    With no SMTP host configured (neither admin setting nor ``SMTP_HOST`` env)
+    this logs the message and returns True, so the reset/alert flows work
+    end-to-end in the demo without a mail server.
     """
-    host = os.environ.get("SMTP_HOST")
+    host = _setting("smtp_host", "SMTP_HOST")
     if not host:
         log.info(
             "[email:log-backend] To: %s | Subject: %s\n%s", to, subject, body
@@ -61,10 +79,13 @@ def send_email(to: str, subject: str, body: str) -> bool:
     msg["Subject"] = subject
     msg.set_content(body)
 
-    port = int(os.environ.get("SMTP_PORT", "587"))
-    use_tls = os.environ.get("SMTP_USE_TLS", "1") != "0"
-    username = os.environ.get("SMTP_USERNAME")
-    password = os.environ.get("SMTP_PASSWORD")
+    try:
+        port = int(_setting("smtp_port", "SMTP_PORT", "587") or "587")
+    except ValueError:
+        port = 587
+    use_tls = (_setting("smtp_use_tls", "SMTP_USE_TLS", "1") or "1") != "0"
+    username = _setting("smtp_username", "SMTP_USERNAME")
+    password = _setting("smtp_password", "SMTP_PASSWORD")
 
     try:
         with smtplib.SMTP(host, port, timeout=15) as server:

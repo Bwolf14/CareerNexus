@@ -1,0 +1,318 @@
+"""
+Career Nexus admin portal — a separate Flask app served on its own port.
+
+Runs from the same image/package as the user app but is entirely separate:
+its own login (default **admin / admin**, bootstrapped on first start), its own
+session cookie, and admin-only routes. From here an admin can:
+
+* see how many users are registered (plus resume/search counts),
+* browse and search all accounts by name/email, and promote/demote admins,
+* configure the AI (Ollama) connection and the email/SMTP settings that the
+  user app + worker read at runtime.
+
+Served in Docker by a dedicated ``admin`` service:
+``gunicorn webapp.admin_app:admin_app --bind 0.0.0.0:8001``. Locally:
+``python -m webapp.admin_app``.
+
+Security note: the default admin/admin credential is a convenience for the
+demo — change it (promote a real account and remove/aside the default) before
+exposing the portal anywhere untrusted, and keep the port firewalled.
+"""
+
+from __future__ import annotations
+
+import os
+from functools import wraps
+
+from flask import (
+    Flask,
+    abort,
+    flash,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+
+from ai_client import (
+    load_settings,
+    normalize_base_url,
+    save_settings,
+    test_connection,
+)
+from ai_client.settings import is_configured, settings_path
+from job_scraper.output import results_dir  # noqa: F401  (ensures dir helper import path)
+
+from . import auth, db
+
+ADMIN_SESSION_KEY = "admin_user_id"
+
+# Default bootstrap admin (created only if no admin exists yet).
+DEFAULT_ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
+DEFAULT_ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin")
+DEFAULT_ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@careernexus.local")
+
+# Email settings the admin can edit (app_settings key -> form field).
+EMAIL_KEYS = [
+    "smtp_host", "smtp_port", "smtp_username", "smtp_password",
+    "smtp_from", "smtp_use_tls", "app_base_url",
+]
+
+admin_app = Flask(__name__)
+admin_app.secret_key = os.environ.get(
+    "ADMIN_SECRET_KEY", "careernexus-admin-demo-secret"
+)
+# Distinct cookie name so the admin session doesn't collide with the user app's
+# session (browser cookies aren't port-specific on the same host).
+admin_app.config["SESSION_COOKIE_NAME"] = "cn_admin_session"
+
+_bootstrapped = False
+
+
+def _bootstrap_admin() -> None:
+    """Create the default admin once, best-effort (needs the DB to be up)."""
+    global _bootstrapped
+    if _bootstrapped:
+        return
+    try:
+        db.ensure_default_admin(
+            DEFAULT_ADMIN_USERNAME,
+            DEFAULT_ADMIN_EMAIL,
+            auth.hash_password(DEFAULT_ADMIN_PASSWORD),
+        )
+        _bootstrapped = True
+    except Exception:
+        pass  # DB not ready yet — try again on the next request
+
+
+@admin_app.before_request
+def _ensure_admin_exists():
+    _bootstrap_admin()
+
+
+def current_admin():
+    """The logged-in admin account (still holding admin rights), or None."""
+    if "_admin" in g:
+        return g._admin
+    admin = None
+    uid = session.get(ADMIN_SESSION_KEY)
+    if uid is not None:
+        try:
+            user = db.get_user_by_id(uid)
+            if user and user.get("is_admin"):
+                admin = user
+        except Exception:
+            admin = None
+        if admin is None:
+            session.pop(ADMIN_SESSION_KEY, None)
+    g._admin = admin
+    return admin
+
+
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if current_admin() is None:
+            return redirect(url_for("login", next=request.full_path))
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+@admin_app.context_processor
+def inject_admin():
+    return {"current_admin": current_admin()}
+
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+@admin_app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_admin() is not None:
+        return redirect(url_for("dashboard"))
+    if request.method == "POST":
+        identifier = (request.form.get("identifier") or "").strip()
+        password = request.form.get("password") or ""
+        throttle_id = "admin:" + identifier.lower()
+        try:
+            if db.throttle_status(throttle_id):
+                flash("Too many failed attempts. Try again later.", "error")
+                return render_template("admin_login.html", identifier=identifier), 429
+        except Exception:
+            pass
+
+        try:
+            admin = db.get_admin_by_login(identifier)
+        except Exception as exc:
+            flash(f"Could not reach the database: {exc}", "error")
+            return render_template("admin_login.html", identifier=identifier), 503
+
+        if admin and auth.verify_password(admin["password_hash"], password):
+            try:
+                db.clear_login_failures(throttle_id)
+            except Exception:
+                pass
+            session.clear()
+            session[ADMIN_SESSION_KEY] = admin["id"]
+            g.pop("_admin", None)
+            return redirect(url_for("dashboard"))
+
+        try:
+            db.record_login_failure(throttle_id, auth.MAX_LOGIN_FAILS, auth.LOGIN_LOCK_SECONDS)
+        except Exception:
+            pass
+        flash("Incorrect admin username/email or password.", "error")
+        return render_template("admin_login.html", identifier=identifier), 401
+
+    return render_template("admin_login.html", identifier="")
+
+
+@admin_app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    g.pop("_admin", None)
+    return redirect(url_for("login"))
+
+
+# ---------------------------------------------------------------------------
+# Dashboard
+# ---------------------------------------------------------------------------
+@admin_app.route("/")
+@admin_required
+def dashboard():
+    stats, db_error = {}, None
+    try:
+        stats = {
+            "users": db.count_users(),
+            "admins": db.count_admins(),
+            "resumes": len(db.list_resumes(limit=100000)),
+            "searches": len(db.list_job_searches(limit=100000)),
+        }
+    except Exception as exc:
+        db_error = str(exc)
+    return render_template("admin_dashboard.html", stats=stats, db_error=db_error)
+
+
+# ---------------------------------------------------------------------------
+# Users
+# ---------------------------------------------------------------------------
+@admin_app.route("/users")
+@admin_required
+def users():
+    q = (request.args.get("q") or "").strip()
+    rows, db_error = [], None
+    try:
+        rows = db.list_all_users(search=q or None)
+    except Exception as exc:
+        db_error = str(exc)
+    return render_template("admin_users.html", users=rows, q=q, db_error=db_error)
+
+
+@admin_app.route("/users/<int:user_id>/admin", methods=["POST"])
+@admin_required
+def set_admin(user_id: int):
+    make_admin = request.form.get("is_admin") == "1"
+    try:
+        if not make_admin:
+            # Don't allow removing the last admin (would lock everyone out).
+            if db.count_admins() <= 1 and db.is_user_admin(user_id):
+                flash("You can't remove the last remaining admin.", "error")
+                return redirect(url_for("users", q=request.args.get("q") or ""))
+        db.set_user_admin(user_id, make_admin)
+        flash("Admin rights " + ("granted." if make_admin else "revoked."), "info")
+    except Exception as exc:
+        flash(f"Could not update that account: {exc}", "error")
+    return redirect(url_for("users", q=request.args.get("q") or ""))
+
+
+# ---------------------------------------------------------------------------
+# Settings (AI + email)
+# ---------------------------------------------------------------------------
+@admin_app.route("/settings", methods=["GET", "POST"])
+@admin_required
+def settings():
+    if request.method == "POST":
+        section = request.form.get("section")
+        if section == "ai":
+            return _save_ai_settings()
+        if section == "email":
+            return _save_email_settings()
+        flash("Unknown settings section.", "error")
+        return redirect(url_for("settings"))
+
+    try:
+        email_settings = {k: (db.get_app_setting(k) or "") for k in EMAIL_KEYS}
+    except Exception:
+        email_settings = {k: "" for k in EMAIL_KEYS}
+    # Defaults for display when unset.
+    email_settings.setdefault("app_base_url", "")
+    return render_template(
+        "admin_settings.html",
+        ai=load_settings(),
+        settings_file=settings_path(),
+        email=email_settings,
+        env_smtp_host=os.environ.get("SMTP_HOST", ""),
+    )
+
+
+def _save_ai_settings():
+    submitted = {
+        "enabled": bool(request.form.get("enabled")),
+        "base_url": (request.form.get("base_url") or "").strip(),
+        "model": (request.form.get("model") or "").strip(),
+        "connect_timeout": request.form.get("connect_timeout") or 4,
+        "read_timeout": request.form.get("read_timeout") or 180,
+    }
+    if submitted["enabled"] and not normalize_base_url(submitted["base_url"]):
+        flash("Enter the AI server address before enabling AI features.", "error")
+    elif submitted["enabled"] and not submitted["model"]:
+        flash("Pick a model before enabling AI — use Test connection to list them.", "error")
+    else:
+        save_settings(submitted)
+        flash("AI settings saved.", "info")
+    return redirect(url_for("settings"))
+
+
+def _save_email_settings():
+    values = {}
+    for key in EMAIL_KEYS:
+        raw = (request.form.get(key) or "").strip()
+        values[key] = raw or None  # empty clears the override (falls back to env)
+    # Checkbox: store "0" when unticked so it overrides an env default of on.
+    values["smtp_use_tls"] = "1" if request.form.get("smtp_use_tls") else "0"
+    try:
+        db.set_app_settings(values)
+        flash("Email settings saved.", "info")
+    except Exception as exc:
+        flash(f"Could not save email settings: {exc}", "error")
+    return redirect(url_for("settings"))
+
+
+@admin_app.route("/api/ai/test", methods=["POST"])
+@admin_required
+def api_ai_test():
+    data = request.get_json(silent=True) or {}
+    base = normalize_base_url(data.get("base_url") or "")
+    result = test_connection({"base_url": base, "connect_timeout": 4.0})
+    result["normalized_url"] = base
+    return jsonify(result)
+
+
+@admin_app.route("/health")
+def health():
+    try:
+        conn = db.get_connection()
+        conn.close()
+        return jsonify(status="ok"), 200
+    except Exception as exc:
+        return jsonify(status="degraded", detail=str(exc)), 503
+
+
+if __name__ == "__main__":
+    db.wait_for_db()
+    _bootstrap_admin()
+    admin_app.run(host="0.0.0.0", port=int(os.environ.get("ADMIN_PORT", "8001")), debug=True)

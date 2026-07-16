@@ -28,12 +28,17 @@ x-app-env: &app-env
   # SMTP_PASSWORD: app-password
   # SMTP_FROM: no-reply@example.com
   # Optional AI server (Ollama / any OpenAI-compatible endpoint). These are
-  # only the boot-time defaults — the /settings page in the UI can set and
-  # test the connection, and its saved values take precedence. See
+  # only the boot-time defaults — the admin portal (port 8001) sets and tests
+  # the connection, and its saved values take precedence. See
   # docs/OLLAMA_SETUP.md for the full Windows + Ollama walkthrough.
   AI_ENABLED: "0"
   AI_BASE_URL: ""     # e.g. http://192.168.1.50:11434 (the GPU PC)
   AI_MODEL: ""        # e.g. qwen3:32b
+  # Bootstrap admin for the admin portal (created on first start only). Change
+  # these before exposing the portal anywhere untrusted.
+  ADMIN_USERNAME: admin
+  ADMIN_PASSWORD: admin
+  ADMIN_EMAIL: admin@careernexus.local
 
 services:
   db:
@@ -76,6 +81,29 @@ services:
       # /health returns 200 when the app and its DB connection are good, 503
       # when degraded — so `docker compose ps` shows the real state.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # Admin portal — separate Flask app on its own port (8001). Default login is
+  # admin / admin (bootstrapped on first start; change ADMIN_* above).
+  admin:
+    build: .
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      <<: *app-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8001:8001"
+    command: ["gunicorn", "--bind", "0.0.0.0:8001", "--workers", "2",
+              "--threads", "4", "--timeout", "120", "webapp.admin_app:admin_app"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -85,7 +85,8 @@ SEARCH_ROW = {
 }
 
 
-USER = {"id": 1, "username": "Alex Smith", "email": "alex@example.com"}
+USER = {"id": 1, "username": "Alex Smith", "email": "alex@example.com",
+        "first_name": "Alex", "last_name": "Smith", "is_admin": 0}
 
 
 def _common_stubs(monkeypatch, tmp_path):
@@ -294,44 +295,12 @@ def test_health_degraded_without_db(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# AI settings page + AI-enabled flow
+# AI-enabled flow (settings themselves now live in the admin portal —
+# see test_admin.py)
 # ---------------------------------------------------------------------------
-def test_settings_page_renders_and_saves(client):
-    resp = client.get("/settings")
-    assert resp.status_code == 200
-    assert b"AI features are OFF" in resp.data
-
-    resp = client.post(
-        "/settings",
-        data={"enabled": "1", "base_url": "192.168.1.50:11434", "model": "qwen3:32b",
-              "connect_timeout": "4", "read_timeout": "180"},
-        follow_redirects=True,
-    )
-    assert resp.status_code == 200
-    assert b"AI settings saved" in resp.data
-    assert b"AI features are ON" in resp.data
-    assert b"http://192.168.1.50:11434/v1" in resp.data  # URL normalised
-
-
-def test_settings_rejects_enable_without_model(client):
-    resp = client.post(
-        "/settings",
-        data={"enabled": "1", "base_url": "192.168.1.50:11434", "model": ""},
-    )
-    assert resp.status_code == 400
-    assert b"Pick a model" in resp.data
-
-
-def test_api_ai_test_endpoint(client, monkeypatch):
-    monkeypatch.setattr(
-        app_module, "test_connection",
-        lambda s: {"ok": True, "latency_ms": 42, "models": ["qwen3:32b"], "error": None},
-    )
-    resp = client.post("/api/ai/test", json={"base_url": "pc.lan:11434"})
-    data = json.loads(resp.data)
-    assert data["ok"] is True
-    assert data["normalized_url"] == "http://pc.lan:11434/v1"
-    assert "qwen3:32b" in data["models"]
+def test_ai_settings_not_in_user_app(client):
+    # The AI settings page was moved out of the user UI.
+    assert client.get("/settings").status_code == 404
 
 
 def test_questions_use_ai_and_post_maps_to_same_list(client, ai_client_on, monkeypatch):
@@ -455,14 +424,15 @@ def test_login_page_renders(anon_client):
 def test_register_requires_consent(anon_client, monkeypatch):
     created = {"n": 0}
 
-    def fake_create(email, pw_hash, consent):
+    def fake_create(email, pw_hash, consent, first_name=None, last_name=None):
         created["n"] += 1
         return 5
 
     monkeypatch.setattr(app_module.db, "create_user", fake_create)
     resp = anon_client.post(
         "/register",
-        data={"email": "new@example.com", "password": "hunter2hunter",
+        data={"first_name": "New", "last_name": "User",
+              "email": "new@example.com", "password": "hunter2hunter",
               "confirm": "hunter2hunter"},  # consent checkbox NOT sent
     )
     assert resp.status_code == 400
@@ -470,25 +440,40 @@ def test_register_requires_consent(anon_client, monkeypatch):
     assert created["n"] == 0  # no account created without consent
 
 
+def test_register_requires_name(anon_client, monkeypatch):
+    monkeypatch.setattr(app_module.db, "create_user",
+                        lambda *a, **kw: pytest.fail("should not be called"))
+    resp = anon_client.post(
+        "/register",
+        data={"email": "new@example.com", "password": "hunter2hunter",
+              "confirm": "hunter2hunter", "consent": "1"},  # no names
+    )
+    assert resp.status_code == 400
+    assert b"first and last name" in resp.data
+
+
 def test_register_with_consent_creates_account_and_logs_in(anon_client, monkeypatch):
     captured = {}
 
-    def fake_create(email, pw_hash, consent):
-        captured["email"] = email
-        captured["consent"] = consent
+    def fake_create(email, pw_hash, consent, first_name=None, last_name=None):
+        captured.update(email=email, consent=consent,
+                        first_name=first_name, last_name=last_name)
         return 5
 
     monkeypatch.setattr(app_module.db, "create_user", fake_create)
     monkeypatch.setattr(app_module.db, "get_user_by_id",
-                        lambda uid: {"id": 5, "username": "new", "email": "new@example.com"})
+                        lambda uid: {"id": 5, "username": "new", "email": "new@example.com",
+                                     "first_name": "New", "last_name": "User", "is_admin": 0})
     resp = anon_client.post(
         "/register",
-        data={"email": "new@example.com", "password": "hunter2hunter",
+        data={"first_name": "New", "last_name": "User",
+              "email": "new@example.com", "password": "hunter2hunter",
               "confirm": "hunter2hunter", "consent": "1"},
     )
     assert resp.status_code == 302
     assert resp.headers["Location"].endswith("/")
     assert captured["consent"] is True
+    assert captured["first_name"] == "New"
     with anon_client.session_transaction() as sess:
         assert sess["user_id"] == 5
 
@@ -498,7 +483,8 @@ def test_register_rejects_short_password(anon_client, monkeypatch):
                         lambda *a, **kw: pytest.fail("should not be called"))
     resp = anon_client.post(
         "/register",
-        data={"email": "new@example.com", "password": "short",
+        data={"first_name": "New", "last_name": "User",
+              "email": "new@example.com", "password": "short",
               "confirm": "short", "consent": "1"},
     )
     assert resp.status_code == 400

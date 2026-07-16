@@ -1,0 +1,29 @@
+{% extends "admin_base.html" %}
+{% block title %}Admin log in — Career Nexus{% endblock %}
+
+{% block content %}
+  <div class="authwrap">
+    <div class="card">
+      <h1>Admin portal</h1>
+      <p class="sub">Restricted access. Log in with an admin account.</p>
+
+      <form method="post" action="{{ url_for('login', next=request.args.get('next')) }}">
+        <div class="formgrid">
+          <div>
+            <label class="field-label" for="identifier">Username or email</label>
+            <input type="text" id="identifier" name="identifier" value="{{ identifier or '' }}"
+                   autocomplete="username" required autofocus />
+          </div>
+          <div>
+            <label class="field-label" for="password">Password</label>
+            <input type="password" id="password" name="password"
+                   autocomplete="current-password" required />
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn big" type="submit">Log in →</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}
