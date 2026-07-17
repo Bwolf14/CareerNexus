@@ -12,6 +12,97 @@
   </div>
 
   <div class="card">
+    <h2>Notifications</h2>
+    <p class="sub">Where job alerts reach you. Email always goes to
+       <strong>{{ account.email }}</strong>; add these for extra channels.</p>
+    <form method="post" action="{{ url_for('account_notifications') }}">
+      <div class="formgrid" style="max-width:520px;">
+        <div>
+          <label class="field-label" for="phone_number">Mobile number
+            <span class="opt">(for SMS alerts)</span></label>
+          <input type="text" id="phone_number" name="phone_number"
+                 value="{{ settings.get('phone_number') or '' }}"
+                 placeholder="+1 403 555 0142" />
+          {% if sms_ready %}
+            <div class="hint">SMS service is configured — alerts will text this number.</div>
+          {% else %}
+            <div class="hint">⚠ The SMS service isn't configured yet (an admin sets it up
+              in the admin portal) — your number is saved but nothing is sent until then.</div>
+          {% endif %}
+        </div>
+        <div>
+          <label class="field-label" for="discord_webhook">Discord webhook URL
+            <span class="opt">(for Discord alerts)</span></label>
+          <input type="text" id="discord_webhook" name="discord_webhook"
+                 value="{{ settings.get('discord_webhook') or '' }}"
+                 placeholder="https://discord.com/api/webhooks/…" />
+          <div class="hint">In Discord: channel settings → Integrations → Webhooks →
+            New webhook → Copy URL. Alerts are posted to that channel.</div>
+        </div>
+      </div>
+      <div class="actions"><button class="btn" type="submit">Save notification settings</button></div>
+    </form>
+  </div>
+
+  <div class="card" style="border-color: rgba(251,191,36,.5);">
+    <h2>Internet AI (bring your own API key)</h2>
+    <div class="banner error" style="font-size:.95rem;">
+      <strong>⚠️ READ THIS BEFORE ENABLING.</strong><br />
+      Turning this on sends your data — <strong>including your resume's contents:
+      your name, contact details, work history, and everything else in it</strong> —
+      to an internet AI provider (OpenAI or Anthropic) using your API key.
+      <ul style="margin:.5rem 0 0; padding-left:1.2rem;">
+        <li><strong>Your data leaves this server.</strong> This feature does NOT keep
+          your information private and local.</li>
+        <li><strong>You are solely responsible</strong> for any personal information
+          sent to the provider, for the provider's handling of it, and for any costs
+          your API key incurs. <strong>We accept no liability.</strong></li>
+        <li>Do not enable this unless you know exactly what's in your resume and are
+          comfortable sharing it with the internet-based model.</li>
+      </ul>
+    </div>
+    {% if settings.get('ai_cloud_enabled') %}
+      <div class="banner warn" style="margin-top:.8rem;"><strong>Currently ON</strong> —
+        your AI requests go to {{ settings.get('ai_provider') or 'openai' }}
+        (<code>{{ settings.get('ai_model') }}</code>) instead of the locally hosted models.</div>
+    {% endif %}
+    <form method="post" action="{{ url_for('account_ai') }}" style="margin-top:1rem;">
+      <div class="formgrid" style="max-width:520px;">
+        <div class="row2">
+          <div>
+            <label class="field-label" for="ai_provider">Provider</label>
+            <select id="ai_provider" name="ai_provider">
+              <option value="openai" {{ 'selected' if settings.get('ai_provider') != 'anthropic' }}>OpenAI (ChatGPT)</option>
+              <option value="anthropic" {{ 'selected' if settings.get('ai_provider') == 'anthropic' }}>Anthropic (Claude)</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="ai_model">Model name</label>
+            <input type="text" id="ai_model" name="ai_model"
+                   value="{{ settings.get('ai_model') or '' }}"
+                   placeholder="e.g. gpt-4o-mini or claude-sonnet-5" />
+          </div>
+        </div>
+        <div>
+          <label class="field-label" for="ai_api_key">API key</label>
+          <input type="password" id="ai_api_key" name="ai_api_key"
+                 value="{{ settings.get('ai_api_key') or '' }}" autocomplete="off" />
+          <div class="hint">Stored on this server so it can call the provider for you.</div>
+        </div>
+        <div class="checks" style="flex-direction:column; align-items:flex-start; gap:.5rem;">
+          <label><input type="checkbox" name="ai_acknowledge" value="1" />
+            <span>I understand my resume data will be sent to the internet provider,
+            and I accept full responsibility.</span></label>
+          <label><input type="checkbox" name="ai_cloud_enabled" value="1"
+                 {{ 'checked' if settings.get('ai_cloud_enabled') }} />
+            <span><strong>Enable internet AI</strong> (overrides the local models for my requests)</span></label>
+        </div>
+      </div>
+      <div class="actions"><button class="btn" type="submit">Save AI settings</button></div>
+    </form>
+  </div>
+
+  <div class="card">
     <h2>Your data</h2>
     <p class="sub">Download everything we hold for your account — your resumes and
        their parsed contents, job searches, saved jobs, and saved searches — as a

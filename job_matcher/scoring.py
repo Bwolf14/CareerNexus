@@ -102,7 +102,13 @@ def _is_remote(job: dict[str, Any]) -> bool:
     return "remote" in text
 
 
-def _recent(job: dict[str, Any], days: int = 7) -> bool:
+def _recent(job: dict[str, Any], days: int = 2) -> bool:
+    """Genuinely fresh postings only.
+
+    The scraper already filters to the last 7 days (JOB_HOURS_OLD=168), so a
+    7-day window here matched *every* posting and the "fresh" signal meant
+    nothing. Two days actually differentiates.
+    """
     posted = job.get("date_posted")
     if not posted:
         return False
@@ -204,7 +210,7 @@ def _score_one(
     # --- Freshness: up to 5 points ---------------------------------------------
     if _recent(job):
         score += 5
-        reasons.append("Posted within the last week")
+        reasons.append("Posted within the last 2 days")
 
     return {
         "job": job,

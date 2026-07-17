@@ -29,6 +29,22 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Per-user preferences: notification channels (SMS number, Discord webhook)
+-- and the optional bring-your-own cloud AI key. The API key is stored so the
+-- server can call the provider on the user's behalf — the account UI carries
+-- a prominent warning that enabling this sends resume data to that provider.
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INT PRIMARY KEY,
+    phone_number VARCHAR(32),
+    discord_webhook VARCHAR(500),
+    ai_cloud_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    ai_provider VARCHAR(20),            -- 'openai' or 'anthropic'
+    ai_api_key VARCHAR(255),
+    ai_model VARCHAR(100),
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 -- Admin-editable application settings (AI, email/SMTP, job-search defaults),
 -- set from the admin portal and read by the web app + worker. Simple key/value
 -- so new settings don't need a migration. A NULL/absent value falls back to the

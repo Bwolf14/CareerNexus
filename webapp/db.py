@@ -1560,3 +1560,56 @@ def get_user_email(user_id: int) -> Optional[str]:
     """Just the email for an account (used by the alert emailer)."""
     row = get_user_by_id(user_id)
     return row["email"] if row else None
+
+
+# ---------------------------------------------------------------------------
+# Per-user settings (notifications + bring-your-own cloud AI)
+# ---------------------------------------------------------------------------
+_USER_SETTINGS_FIELDS = {
+    "phone_number", "discord_webhook",
+    "ai_cloud_enabled", "ai_provider", "ai_api_key", "ai_model",
+}
+
+
+def get_user_settings(user_id: int) -> dict[str, Any]:
+    """A user's settings row as a dict — {} when unset, DB down, or table missing."""
+    try:
+        conn = get_connection()
+    except Exception:
+        return {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM user_settings WHERE user_id = %s", (user_id,)
+            )
+            return cur.fetchone() or {}
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+def upsert_user_settings(user_id: int, **fields: Any) -> None:
+    """Insert-or-update a user's settings (only whitelisted columns)."""
+    clean = {k: v for k, v in fields.items() if k in _USER_SETTINGS_FIELDS}
+    if not clean:
+        return
+    cols = ", ".join(clean)
+    placeholders = ", ".join(["%s"] * len(clean))
+    updates = ", ".join(f"{k} = VALUES({k})" for k in clean)
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO user_settings (user_id, {cols}) "
+                f"VALUES (%s, {placeholders}) "
+                f"ON DUPLICATE KEY UPDATE {updates}",
+                (user_id, *clean.values()),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

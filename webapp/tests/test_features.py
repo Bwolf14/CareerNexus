@@ -506,6 +506,151 @@ def test_company_profile_rejects_non_org(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# SMS / Discord notifications + per-user settings
+# ---------------------------------------------------------------------------
+def test_account_saves_notification_channels(client, monkeypatch):
+    saved = {}
+    monkeypatch.setattr(app_module.db, "upsert_user_settings",
+                        lambda uid, **f: saved.update(uid=uid, **f))
+    resp = client.post("/account/notifications", data={
+        "phone_number": "+1 403 555 0142",
+        "discord_webhook": "https://discord.com/api/webhooks/123/abc",
+    })
+    assert resp.status_code == 302
+    assert saved["phone_number"] == "+1 403 555 0142"
+    assert saved["discord_webhook"].startswith("https://discord.com/api/webhooks/")
+
+
+def test_account_rejects_bad_webhook(client, monkeypatch):
+    monkeypatch.setattr(app_module.db, "upsert_user_settings",
+                        lambda uid, **f: pytest.fail("should not save"))
+    resp = client.post("/account/notifications", data={
+        "discord_webhook": "https://evil.example.com/hook",
+    }, follow_redirects=True)
+    assert b"Discord webhook" in resp.data
+
+
+def test_notify_user_fans_out(monkeypatch):
+    from webapp import notifications as n
+    monkeypatch.setattr(n.db, "get_user_email", lambda uid: "a@b.c")
+    monkeypatch.setattr(n.db, "get_user_settings", lambda uid: {
+        "phone_number": "+14035550142",
+        "discord_webhook": "https://discord.com/api/webhooks/1/x",
+    })
+    calls = {}
+    monkeypatch.setattr(n, "send_sms", lambda to, body: calls.setdefault("sms", to) or True)
+    monkeypatch.setattr(n, "send_discord", lambda url, c: calls.setdefault("dc", url) or True)
+    sent = n.notify_user(1, "subj", "body",
+                         email_fn=lambda to, s, b: calls.setdefault("email", to) or True)
+    assert sent == {"email": True, "sms": True, "discord": True}
+    assert calls["sms"] == "+14035550142"
+
+
+def test_send_sms_unconfigured_returns_false(monkeypatch):
+    from webapp import notifications as n
+    monkeypatch.setattr(n, "sms_config", lambda: None)
+    assert n.send_sms("+15551234567", "hi") is False
+
+
+# ---------------------------------------------------------------------------
+# Alert criteria filtering (worker)
+# ---------------------------------------------------------------------------
+def test_alert_criteria_filters_postings(monkeypatch):
+    from webapp import worker
+    monkeypatch.setattr(worker.db, "get_saved_search", lambda sid: {
+        "id": 2, "user_id": 1, "label": "Google roles", "last_search_id": 6,
+        "params": {"filter_company": "google", "filter_title": "engineer"},
+    })
+
+    def jobs_for(search_id):
+        base = [{"title": "Software Engineer", "company": "Google",
+                 "location": "Toronto", "source_site": "indeed", "job_url": "u0"}]
+        if search_id == 7:
+            base += [
+                {"title": "Software Engineer II", "company": "Google",
+                 "location": "Toronto", "source_site": "indeed", "job_url": "u1"},
+                {"title": "Software Engineer", "company": "Amazon",   # wrong company
+                 "location": "Toronto", "source_site": "indeed", "job_url": "u2"},
+                {"title": "Chef", "company": "Google",                # wrong title
+                 "location": "Toronto", "source_site": "indeed", "job_url": "u3"},
+            ]
+        return base
+
+    monkeypatch.setattr(worker.db, "get_jobs_for_search", jobs_for)
+    monkeypatch.setattr(worker.db, "set_saved_search_result", lambda *a: None)
+    captured = {}
+    monkeypatch.setattr(worker, "_send_alert",
+                        lambda ss, sid, fresh: captured.update(fresh=fresh))
+
+    worker._handle_alert(2, 7)
+    titles = [j["title"] for j in captured["fresh"]]
+    assert titles == ["Software Engineer II"]   # only Google + engineer + new
+
+
+def test_alerts_create_stores_filters(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(app_module.db, "create_saved_search",
+                        lambda uid, rid, label, params, freq, nxt:
+                        captured.update(params=params) or 3)
+    resp = client.post("/alerts/create", data={
+        "resume_id": "3", "frequency": "daily",
+        "filter_company": "Google", "filter_title": "engineer",
+        "work_type": "any", "country": "Canada",
+    })
+    assert resp.status_code == 302
+    assert captured["params"]["filter_company"] == "Google"
+    assert captured["params"]["filter_title"] == "engineer"
+    assert "Google" in captured["params"]["keywords"]  # searched, not just filtered
+
+
+# ---------------------------------------------------------------------------
+# BYO cloud AI
+# ---------------------------------------------------------------------------
+def test_account_ai_requires_acknowledgement(client, monkeypatch):
+    monkeypatch.setattr(app_module.db, "upsert_user_settings",
+                        lambda uid, **f: pytest.fail("should not save"))
+    resp = client.post("/account/ai", data={
+        "ai_cloud_enabled": "1", "ai_provider": "openai",
+        "ai_api_key": "sk-x", "ai_model": "gpt-4o-mini",
+    }, follow_redirects=True)
+    assert b"acknowledgement" in resp.data
+
+
+def test_account_ai_saves_with_acknowledgement(client, monkeypatch):
+    saved = {}
+    monkeypatch.setattr(app_module.db, "upsert_user_settings",
+                        lambda uid, **f: saved.update(f))
+    resp = client.post("/account/ai", data={
+        "ai_cloud_enabled": "1", "ai_acknowledge": "1", "ai_provider": "anthropic",
+        "ai_api_key": "sk-ant-x", "ai_model": "claude-sonnet-5",
+    })
+    assert resp.status_code == 302
+    assert saved["ai_cloud_enabled"] is True
+    assert saved["ai_provider"] == "anthropic"
+
+
+def test_ai_config_injects_user_cloud(client, monkeypatch):
+    monkeypatch.setattr(app_module.db, "get_user_settings", lambda uid: {
+        "ai_cloud_enabled": 1, "ai_provider": "openai",
+        "ai_api_key": "sk-x", "ai_model": "gpt-4o-mini",
+    })
+    with app.test_request_context("/"):
+        with client.session_transaction():
+            pass
+    # Call within a request context where current_user resolves.
+    calls = {}
+    from ai_client.settings import is_configured
+    from ai_client.tiered import configured_model
+    with app.test_request_context("/"):
+        from flask import session
+        session["user_id"] = 1
+        cfg = app_module._ai_config()
+    assert cfg["cloud"]["enabled"] is True
+    assert configured_model(cfg) == "gpt-4o-mini"   # cloud wins over slots
+    assert is_configured(cfg) is True               # AI offered w/o backend slots
+
+
+# ---------------------------------------------------------------------------
 # OCR fallback (graceful when Tesseract/pytesseract absent)
 # ---------------------------------------------------------------------------
 def test_ocr_degrades_gracefully():

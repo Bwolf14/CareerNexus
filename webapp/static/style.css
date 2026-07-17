@@ -581,3 +581,13 @@ pre.json { background: var(--inset); border: 1px solid var(--border-soft); borde
 .fact-label { display: block; font-size: .7rem; font-weight: 800; letter-spacing: .06em;
               text-transform: uppercase; color: var(--faint); }
 .fact-value { font-size: .92rem; font-weight: 600; word-break: break-word; }
+
+/* Admin settings: sticky section sub-nav */
+.settings-subnav { position: sticky; top: 0; z-index: 30; display: flex; gap: .4rem;
+                   flex-wrap: wrap; padding: .55rem 0; margin: 0 0 .3rem;
+                   background: linear-gradient(var(--bg) 82%, transparent); }
+.settings-subnav a { padding: .35rem .8rem; border: 1px solid var(--border);
+                     border-radius: 999px; color: var(--muted); font-size: .84rem;
+                     font-weight: 700; background: var(--card); }
+.settings-subnav a:hover { color: var(--text); border-color: var(--accent); text-decoration: none; }
+.card[id^="sec-"] { scroll-margin-top: 3.4rem; }

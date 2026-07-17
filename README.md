@@ -181,6 +181,22 @@ before exposing it). From the portal an admin can:
   are listed, with a slide-out preview of the parsed contents.
 * **Light mode** — the ◐ button in the nav toggles light/dark (persists per
   browser).
+* **SMS + Discord alerts** — users add their own phone number and/or Discord
+  webhook on the account page; an admin configures the Twilio credentials in
+  the admin portal (Settings → SMS). Job alerts then fan out to email + SMS +
+  Discord.
+* **Specific alert criteria** — a saved search can be narrowed to a company
+  and/or a title substring (e.g. only *Google* postings containing
+  *engineer*), so alerts fire for exactly what you're watching instead of
+  every new posting.
+* **Bring-your-own internet AI** — a user can enter their own OpenAI or
+  Anthropic API key (account page, behind a prominent privacy warning). When
+  enabled, THEIR AI requests go to that provider instead of the local models,
+  with a hidden pre-prompt disabling extended thinking for fast, high-quality
+  answers. Resume data leaves the server when this is on — the user accepts
+  responsibility explicitly.
+* **Per-model timeouts** — connect + response timeouts are rows in the admin
+  options matrix, so each model slot can have its own.
 * **Tailor my resume** (`/tailor/...`) — per-posting advice on which of your
   skills to lead with and which keywords/gaps to address (AI-written when an
   Ollama server is configured, deterministic otherwise).

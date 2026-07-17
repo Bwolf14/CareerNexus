@@ -2,17 +2,25 @@
 {% block title %}Settings — Career Nexus Admin{% endblock %}
 
 {% block content %}
-  <h1>AI &amp; email settings</h1>
+  <h1>Settings</h1>
   <p class="sub">Configure the tiered AI models, per-model options, local model
-     downloads, and email. The app tries the models <strong>primary →
+     downloads, email, and SMS. The app tries the models <strong>primary →
      secondary → tertiary</strong>, connectivity-testing each before every
      prompt, and falls back to <strong>safe mode</strong> (no AI) if none answer.</p>
+
+  <nav class="settings-subnav">
+    <a href="#sec-slots">Model slots</a>
+    <a href="#sec-options">Per-model options</a>
+    <a href="#sec-local">Local models</a>
+    <a href="#sec-email">Email</a>
+    <a href="#sec-sms">SMS</a>
+  </nav>
 
   <form method="post" action="{{ url_for('settings') }}" id="ai-form">
     <input type="hidden" name="section" value="ai" />
 
     <!-- ===================== Model slots ===================== -->
-    <div class="card">
+    <div class="card" id="sec-slots">
       <h2>Model slots</h2>
       <div class="slotgrid">
         {% for name in slots %}
@@ -55,7 +63,7 @@
     </div>
 
     <!-- ===================== Options matrix ===================== -->
-    <div class="card">
+    <div class="card" id="sec-options">
       <h2>Per-model options</h2>
       <p class="sub">Click a cell to turn a setting on for that model. A setting
         left off for all models is off entirely. Value settings reveal a box when
@@ -109,7 +117,7 @@
   </form>
 
   <!-- ===================== Local models ===================== -->
-  <div class="card">
+  <div class="card" id="sec-local">
     <h2>Local models</h2>
     <p class="sub">Download models to run on this server's own hardware (the
       bundled Ollama engine at <code>{{ local_url }}</code>). Assign one to a slot
@@ -164,7 +172,7 @@
   </div>
 
   <!-- ===================== Email / SMTP ===================== -->
-  <div class="card">
+  <div class="card" id="sec-email">
     <h2>Email (SMTP)</h2>
     <p class="sub">Used for password-reset links and job alerts. Leave the host
        blank to keep the log backend (messages printed to the container log).</p>
@@ -203,6 +211,42 @@
         </div>
       </div>
       <div class="actions"><button class="btn big" type="submit">Save email settings</button></div>
+    </form>
+  </div>
+
+  <!-- ===================== SMS (Twilio) ===================== -->
+  <div class="card" id="sec-sms">
+    <h2>SMS (Twilio)</h2>
+    <p class="sub">The service side of SMS job alerts. Users add their own phone
+       numbers on their account page — nothing is texted until these credentials
+       are set. Get them from the Twilio console (a trial account works for
+       testing).</p>
+    {% if sms.twilio_account_sid and sms.twilio_auth_token and sms.twilio_from_number %}
+      <div class="banner info"><strong>SMS configured</strong> — alerts will text users
+        who added a number, from <code>{{ sms.twilio_from_number }}</code>.</div>
+    {% else %}
+      <div class="banner warn"><strong>SMS off</strong> — fill in all three fields to
+        enable it. User phone numbers are saved meanwhile.</div>
+    {% endif %}
+    <form method="post" action="{{ url_for('settings') }}">
+      <input type="hidden" name="section" value="sms" />
+      <div class="formgrid">
+        <div class="row2">
+          <div><label class="field-label" for="twilio_account_sid">Account SID</label>
+            <input type="text" id="twilio_account_sid" name="twilio_account_sid"
+                   value="{{ sms.twilio_account_sid or '' }}" placeholder="ACxxxxxxxx…" autocomplete="off" /></div>
+          <div><label class="field-label" for="twilio_auth_token">Auth token</label>
+            <input type="password" id="twilio_auth_token" name="twilio_auth_token"
+                   value="{{ sms.twilio_auth_token or '' }}" autocomplete="new-password" /></div>
+        </div>
+        <div style="max-width:280px;">
+          <label class="field-label" for="twilio_from_number">From number</label>
+          <input type="text" id="twilio_from_number" name="twilio_from_number"
+                 value="{{ sms.twilio_from_number or '' }}" placeholder="+15005550006" />
+          <div class="hint">Your Twilio phone number, in E.164 format.</div>
+        </div>
+      </div>
+      <div class="actions"><button class="btn big" type="submit">Save SMS settings</button></div>
     </form>
   </div>
 {% endblock %}

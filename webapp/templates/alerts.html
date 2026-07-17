@@ -24,6 +24,8 @@
               <td>
                 <strong>{{ s.label or 'Untitled alert' }}</strong>
                 <div class="jobmeta">
+                  {% if s.params.filter_company %}<span class="pill">🏢 {{ s.params.filter_company }}</span>{% endif %}
+                  {% if s.params.filter_title %}<span class="pill">💼 title: {{ s.params.filter_title }}</span>{% endif %}
                   {% if s.params.keywords %}{{ s.params.keywords | join(', ') }}{% endif %}
                   {% if s.params.location %}· 📍 {{ s.params.location }}{% endif %}
                 </div>
@@ -74,6 +76,29 @@
             <label class="field-label" for="label">Name <span class="opt">(optional)</span></label>
             <input type="text" id="label" name="label" placeholder="e.g. Calgary electrician jobs" />
           </div>
+        </div>
+
+        <div class="row2">
+          <div>
+            <label class="field-label" for="filter_company">Only this company <span class="opt">(optional)</span></label>
+            <input type="text" id="filter_company" name="filter_company"
+                   placeholder="e.g. Google" />
+            <div class="field-hint" style="color:var(--faint); font-size:.78rem; margin-top:.3rem;">
+              The alert only fires for postings from this company.</div>
+          </div>
+          <div>
+            <label class="field-label" for="filter_title">Job title must contain <span class="opt">(optional)</span></label>
+            <input type="text" id="filter_title" name="filter_title"
+                   placeholder="e.g. software engineer" />
+            <div class="field-hint" style="color:var(--faint); font-size:.78rem; margin-top:.3rem;">
+              The alert only fires when the title contains this text.</div>
+          </div>
+        </div>
+        <div class="banner info" style="font-size:.85rem;">
+          <strong>Make it specific.</strong> Without filters a resume-driven search
+          matches many new postings every day, so the alert fires constantly. Add a
+          company and/or title filter to only hear about e.g. <em>Google</em> roles
+          containing <em>engineer</em>.
         </div>
 
         <div>
