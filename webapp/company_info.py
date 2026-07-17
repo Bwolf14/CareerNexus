@@ -52,6 +52,8 @@ _P_FOUNDED = "P571"
 _P_EMPLOYEES = "P1128"
 _P_REVENUE = "P2139"
 _P_WEBSITE = "P856"
+_P_PARENT = "P749"
+_P_EXCHANGE = "P414"
 _P_POINT_IN_TIME = "P585"
 
 # Trailing legal suffixes that hurt name matching.
@@ -75,12 +77,12 @@ _ORG_HINTS = (
 
 
 # ---------------------------------------------------------------------------
-# Cache (v2 prefix: v1 cached exact-title misses, e.g. a permanent None for
-# RBC, which must not survive the switch to entity search)
+# Cache (versioned prefix — bump it whenever the profile shape gains fields so
+# stale entries refresh: v2 = entity search, v3 = +ceo/parent/listed_on facts)
 # ---------------------------------------------------------------------------
 def _cache_path(company: str) -> str:
     key = hashlib.sha1(company.strip().lower().encode("utf-8")).hexdigest()[:16]
-    return os.path.join(results_dir(), f"company2_{key}.json")
+    return os.path.join(results_dir(), f"company3_{key}.json")
 
 
 def cached_company(company: str) -> dict[str, Any]:
@@ -201,9 +203,20 @@ def _latest(stmts: list[dict]) -> Optional[dict]:
     return max(stmts, key=lambda s: _stmt_year(s) or -1)
 
 
+_P_END_TIME = "P582"
+
+
 def _item_ids(entity: dict, prop: str, limit: int = 3) -> list[str]:
+    """Item-valued claims, preferring ones still current (no end-time qualifier).
+
+    Matters for roles like CEO: Wikidata keeps past officeholders too, marked
+    with an end date — without this filter a former CEO can be returned.
+    """
+    stmts = _statements(entity, prop)
+    current = [s for s in stmts
+               if _P_END_TIME not in ((s.get("qualifiers") or {}))]
     out = []
-    for stmt in _statements(entity, prop)[:limit]:
+    for stmt in (current or stmts)[:limit]:
         value = _snak_value(stmt)
         if isinstance(value, dict) and value.get("id"):
             out.append(value["id"])
@@ -271,7 +284,12 @@ def _build_profile(entity: dict, cand: dict) -> dict[str, Any]:
     industry_ids = _item_ids(entity, _P_INDUSTRY)
     hq_ids = _item_ids(entity, _P_HQ, limit=1)
     country_ids = _item_ids(entity, _P_COUNTRY, limit=1)
-    labels = _wd_labels(industry_ids + hq_ids + country_ids + ([rev_unit] if rev_unit else []))
+    parent_ids = _item_ids(entity, _P_PARENT, limit=1)
+    exchange_ids = _item_ids(entity, _P_EXCHANGE, limit=1)
+    labels = _wd_labels(
+        industry_ids + hq_ids + country_ids + parent_ids + exchange_ids
+        + ([rev_unit] if rev_unit else [])
+    )
 
     founded = None
     founded_stmt = _latest(_statements(entity, _P_FOUNDED))
@@ -308,6 +326,10 @@ def _build_profile(entity: dict, cand: dict) -> dict[str, Any]:
             + (f" {unit_label}" if unit_label else "")
             + (f" ({rev_year})" if rev_year else "")
         )
+    if parent_ids and labels.get(parent_ids[0]):
+        facts["parent"] = labels[parent_ids[0]]
+    if exchange_ids and labels.get(exchange_ids[0]):
+        facts["listed_on"] = labels[exchange_ids[0]]
     if website:
         facts["website"] = website
 

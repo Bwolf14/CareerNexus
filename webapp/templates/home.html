@@ -26,19 +26,19 @@
   <div class="card">
     <h2>Start with your resume</h2>
     <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
-      <label class="drop" id="drop">
-        <input type="file" id="file" name="resume" accept=".pdf,.docx" required />
-        <p class="big"><strong>Click to choose</strong> or drag &amp; drop your resume here</p>
-        <p>PDF or DOCX · up to 16&nbsp;MB · parsed locally, stored in your database</p>
-      </label>
-      <div class="filename" id="filename"></div>
-      <div style="margin-top:1rem; max-width:420px;">
+      <div style="margin-bottom:1rem; max-width:420px;">
         <label class="field-label" for="resume_name">Resume name</label>
         <input type="text" id="resume_name" name="resume_name" maxlength="120" required
                placeholder="e.g. Trades resume 2026" />
         <div class="hint">Required — this is how the resume is labelled everywhere
           (uploads list, alerts, tracker).</div>
       </div>
+      <label class="drop" id="drop">
+        <input type="file" id="file" name="resume" accept=".pdf,.docx" required />
+        <p class="big"><strong>Click to choose</strong> or drag &amp; drop your resume here</p>
+        <p>PDF or DOCX · up to 16&nbsp;MB · parsed locally, stored in your database</p>
+      </label>
+      <div class="filename" id="filename"></div>
       <div class="actions">
         <button class="btn big" id="submit" type="submit" disabled>Parse my resume →</button>
         <span class="spinner" id="spinner">Parsing your resume…</span>
@@ -97,7 +97,11 @@
                     <a href="/profile/{{ r.id }}">Open profile</a> ·
                     <button class="logout-btn preview-btn" type="button"
                             data-id="{{ r.id }}"
-                            data-label="{{ r.label or 'Resume #' ~ r.id }}">Preview</button>
+                            data-label="{{ r.label or 'Resume #' ~ r.id }}">Preview</button> ·
+                    <form method="post" action="/resume/{{ r.id }}/delete" style="display:inline;"
+                          onsubmit="return confirm('Delete “{{ r.label or 'Resume #' ~ r.id }}”? Past searches keep their results, but this resume and its parsed data are removed permanently.');">
+                      <button class="logout-btn" type="submit" style="color:var(--danger);">Delete</button>
+                    </form>
                   </td>
                 </tr>
                 {% endfor %}

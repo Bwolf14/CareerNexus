@@ -506,6 +506,72 @@ def test_company_profile_rejects_non_org(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Resume deletion + job-detail facts + score levels
+# ---------------------------------------------------------------------------
+def test_resume_delete_own(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(app_module.db, "delete_resume",
+                        lambda uid, rid: captured.update(uid=uid, rid=rid) or True)
+    resp = client.post("/resume/3/delete")
+    assert resp.status_code == 302
+    assert captured == {"uid": 1, "rid": 3}
+
+
+def test_resume_delete_not_owned_404(client, monkeypatch):
+    monkeypatch.setattr(app_module.db, "delete_resume", lambda uid, rid: False)
+    assert client.post("/resume/999/delete").status_code == 404
+
+
+def test_home_has_name_above_drop_and_delete(client):
+    resp = client.get("/")
+    body = resp.data.decode()
+    # The resume-name field must come before the drop zone in the form.
+    assert body.index('id="resume_name"') < body.index('id="drop"')
+
+
+def test_job_detail_at_a_glance_and_toggle(client):
+    resp = client.get("/job/7/" + _job_key())
+    body = resp.data.decode()
+    assert "At a glance" in body
+    assert "Pay" in body and "$70,000" in body        # salary fact surfaced
+    # Fixture description is short, so no toggle — but the summary section shows.
+    assert "Summary" in body
+
+
+def test_scores_reach_healthy_levels():
+    from job_matcher import score_jobs
+    picks = score_jobs(PARSED, JOBS)
+    assert picks[0]["score"] >= 60      # good match without answers
+    answers = {"preferred_skills": ["Python", "Cisco IOS"], "work_style": "On-site",
+               "salary": {"min": "70000", "max": "95000", "interval": "yearly"}}
+    picks = score_jobs(PARSED, JOBS, answers)
+    assert picks[0]["score"] >= 80      # strong match with answers
+
+
+def test_company_profile_includes_leadership_facts(monkeypatch, tmp_path):
+    from webapp import company_info as ci
+    monkeypatch.setenv("JOB_RESULTS_DIR", str(tmp_path))
+    monkeypatch.setattr(ci, "_wd_search", lambda name: [
+        {"id": "Q1", "label": "MegaCorp", "description": "multinational company"}])
+    monkeypatch.setattr(ci, "_wd_entities", lambda qids: {"Q1": {
+        "id": "Q1",
+        "labels": {"en": {"value": "MegaCorp"}},
+        "descriptions": {"en": {"value": "multinational company"}},
+        "sitelinks": {"enwiki": {"title": "MegaCorp"}},
+        "claims": {
+            "P749": [{"rank": "normal", "mainsnak": {"datavalue": {"value": {"id": "Q8"}}}}],
+            "P414": [{"rank": "normal", "mainsnak": {"datavalue": {"value": {"id": "Q7"}}}}],
+        },
+    }})
+    monkeypatch.setattr(ci, "_wd_labels", lambda qids: {
+        "Q8": "MegaHoldings", "Q7": "Toronto Stock Exchange"})
+    monkeypatch.setattr(ci, "_fetch_summary", lambda title: None)
+    profile = ci.company_profile("MegaCorp")
+    assert profile["facts"]["parent"] == "MegaHoldings"
+    assert profile["facts"]["listed_on"] == "Toronto Stock Exchange"
+
+
+# ---------------------------------------------------------------------------
 # SMS / Discord notifications + per-user settings
 # ---------------------------------------------------------------------------
 def test_account_saves_notification_channels(client, monkeypatch):

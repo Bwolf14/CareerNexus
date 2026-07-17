@@ -37,9 +37,38 @@
       </div>
     </div>
 
+    <h2 style="margin-top:1rem;">At a glance</h2>
+    <div class="fact-grid">
+      <div class="fact"><span class="fact-label">Pay</span>
+        <span class="fact-value">{{ job.salary_display or 'Not stated in the posting' }}</span></div>
+      <div class="fact"><span class="fact-label">Location</span>
+        <span class="fact-value">{{ job.location or 'Not stated' }}</span></div>
+      <div class="fact"><span class="fact-label">Work style</span>
+        <span class="fact-value">{{ 'Remote' if job.is_remote else 'On-site / local' }}</span></div>
+      {% if job.job_type %}
+      <div class="fact"><span class="fact-label">Employment type</span>
+        <span class="fact-value">{{ job.job_type }}</span></div>
+      {% endif %}
+      {% if job.date_posted %}
+      <div class="fact"><span class="fact-label">Posted</span>
+        <span class="fact-value">{{ job.date_posted }}</span></div>
+      {% endif %}
+      {% if job.source_site %}
+      <div class="fact"><span class="fact-label">Found on</span>
+        <span class="fact-value">{{ job.source_site }}{% if job.also_on %} (also {{ job.also_on | join(', ') }}){% endif %}</span></div>
+      {% endif %}
+    </div>
+
     {% if job.description %}
-      <h2 style="margin-top:1rem;">Job description</h2>
-      <div class="desc-full">{{ job.description }}</div>
+      <h2 style="margin-top:1.1rem;">Summary</h2>
+      <p style="margin:.2rem 0 0; color:var(--muted); line-height:1.6;">
+        {{ job.description[:340] }}{% if job.description | length > 340 %}…{% endif %}</p>
+      {% if job.description | length > 340 %}
+        <div class="actions" style="margin-top:.7rem;">
+          <button class="btn secondary" type="button" id="toggle-desc">Show full job description ▾</button>
+        </div>
+        <div class="desc-full" id="full-desc" style="display:none; margin-top:.8rem;">{{ job.description }}</div>
+      {% endif %}
     {% else %}
       <p class="empty">No description was captured for this posting — open the original
         posting for the full text.</p>
@@ -99,6 +128,18 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+  const toggleDesc = document.getElementById('toggle-desc');
+  if (toggleDesc) {
+    toggleDesc.addEventListener('click', () => {
+      const full = document.getElementById('full-desc');
+      const open = full.style.display !== 'none';
+      full.style.display = open ? 'none' : 'block';
+      toggleDesc.textContent = open ? 'Show full job description ▾'
+                                    : 'Hide full job description ▴';
+    });
+  }
+</script>
 {% if job.company %}
 <script>
   // Company info loads after the page renders — never blocks navigation.
@@ -126,7 +167,9 @@
         }
         const factLabels = {industry: 'Industry', headquarters: 'Headquarters',
                             founded: 'Founded', employees: 'Employees',
-                            revenue: 'Annual revenue', website: 'Website'};
+                            revenue: 'Annual revenue',
+                            parent: 'Parent company', listed_on: 'Listed on',
+                            website: 'Website'};
         const facts = p.facts || {};
         const rows = Object.keys(factLabels).filter(k => facts[k]);
         if (rows.length) {
