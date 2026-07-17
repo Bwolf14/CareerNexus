@@ -21,6 +21,7 @@ import hashlib
 import math
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional
 
 # Boards to scrape. Indeed, ZipRecruiter, and Glassdoor all work without proxies
@@ -36,6 +37,29 @@ DEFAULT_SITES = [
 # Per-query knobs, env-overridable for tuning the demo.
 RESULTS_PER_QUERY = int(os.environ.get("JOB_RESULTS_PER_QUERY", "15"))
 HOURS_OLD = int(os.environ.get("JOB_HOURS_OLD", "168"))  # last 7 days
+
+# Search-depth presets: how many postings to ask each board for per query, and
+# how far back to look. "quick" mirrors the original env-tunable defaults.
+# Boards cap the look-back themselves (Indeed's fromage tops out around two
+# weeks), so "deep" mostly buys more results rather than truly month-old ads —
+# the internal job library is what actually accumulates older postings.
+DEPTH_PRESETS: dict[str, dict[str, int]] = {
+    "quick": {"results_wanted": RESULTS_PER_QUERY, "hours_old": HOURS_OLD},
+    "standard": {"results_wanted": 50, "hours_old": 336},  # ~2 weeks
+    "deep": {"results_wanted": 100, "hours_old": 720},  # ~30 days (board-capped)
+}
+DEFAULT_DEPTH = "standard"
+
+
+def resolve_depth(depth: Optional[str]) -> dict[str, int]:
+    """Map a depth name onto {results_wanted, hours_old}; unknown → default."""
+    return DEPTH_PRESETS.get((depth or "").strip().lower(), DEPTH_PRESETS[DEFAULT_DEPTH])
+
+
+# How many queries to scrape at once. Each JobSpy call already fans out across
+# the boards internally, so this multiplies board traffic — keep it modest to
+# stay under the boards' rate limits.
+SCRAPE_WORKERS = max(1, int(os.environ.get("JOB_SCRAPE_CONCURRENCY", "3")))
 
 # Which country's Indeed/Glassdoor site to search. JobSpy defaults to the US
 # site, so a "Calgary, Alberta" search on the US domain returns nothing — this
@@ -323,23 +347,45 @@ def scrape_jobs_for_queries(
         _scrape = None
         errors.append(f"JobSpy unavailable: {exc}")
 
-    if _scrape is not None:
-        for query in queries:
-            try:
-                df = _scrape(
-                    site_name=sites,
-                    search_term=query["search_term"],
-                    location=query.get("location") or None,
-                    results_wanted=fetch_wanted,
-                    hours_old=hours_old,
-                    country_indeed=country_indeed,
-                )
+    if _scrape is not None and queries:
+
+        def _run_query(query: dict[str, Any]) -> list[dict[str, Any]]:
+            df = _scrape(
+                site_name=sites,
+                search_term=query["search_term"],
+                location=query.get("location") or None,
+                results_wanted=fetch_wanted,
+                hours_old=hours_old,
+                country_indeed=country_indeed,
+            )
+            if df is None or not len(df):
+                return []
+            return [_normalise(record, query) for record in df.to_dict("records")]
+
+        # Queries run concurrently (each JobSpy call already parallelises the
+        # boards internally). Results and errors are re-assembled in query
+        # order so runs stay deterministic regardless of completion order.
+        per_query: list[Optional[list[dict[str, Any]]]] = [None] * len(queries)
+        query_errors: list[Optional[str]] = [None] * len(queries)
+        workers = min(SCRAPE_WORKERS, len(queries))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(_run_query, query): i
+                for i, query in enumerate(queries)
+            }
+            for future in as_completed(futures):
+                i = futures[future]
+                try:
+                    per_query[i] = future.result()
+                except Exception as exc:  # one bad query shouldn't sink the run
+                    query_errors[i] = f"{queries[i]['search_term']!r}: {exc}"
+
+        for i in range(len(queries)):
+            if query_errors[i] is not None:
+                errors.append(query_errors[i])
+            else:
                 got_live = True
-                if df is not None and len(df):
-                    for record in df.to_dict("records"):
-                        collected.append(_normalise(record, query))
-            except Exception as exc:  # one bad query shouldn't sink the run
-                errors.append(f"{query['search_term']!r}: {exc}")
+                collected.extend(per_query[i] or [])
 
     jobs = _apply_remote_filter(_dedup(collected), remote_preference)
     if jobs:

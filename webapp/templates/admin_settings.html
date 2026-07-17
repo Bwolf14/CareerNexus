@@ -12,6 +12,7 @@
     <a href="#sec-slots">Model slots</a>
     <a href="#sec-options">Per-model options</a>
     <a href="#sec-local">Local models</a>
+    <a href="#sec-search">Job search</a>
     <a href="#sec-email">Email</a>
     <a href="#sec-sms">SMS</a>
   </nav>
@@ -211,6 +212,30 @@
         </div>
       </div>
       <div class="actions"><button class="btn big" type="submit">Save email settings</button></div>
+    </form>
+  </div>
+
+  <!-- ===================== Job search ===================== -->
+  <div class="card" id="sec-search">
+    <h2>Job search</h2>
+    <p class="sub">The default search depth pre-selected on every user's search form
+       (users can still change it per search). Retries and scheduled alert searches
+       also use this default. Deeper searches take longer and put more load on the
+       job boards — and the boards themselves cap how far back they'll go (Indeed
+       around two weeks); the internal job library is what accumulates older postings.</p>
+    <form method="post" action="{{ url_for('settings') }}">
+      <input type="hidden" name="section" value="search" />
+      <div class="seg">
+        {% for d in depth_choices %}
+          <label><input type="radio" name="search_depth_default" value="{{ d.key }}"
+                        {{ 'checked' if d.key == depth_default else '' }} />
+                 <span>{{ d.label }}</span></label>
+        {% endfor %}
+      </div>
+      <div class="hint" style="margin-top:.4rem;">
+        {% for d in depth_choices %}<strong>{{ d.label }}</strong>: {{ d.blurb }}{{ ' · ' if not loop.last }}{% endfor %}
+      </div>
+      <div class="actions"><button class="btn big" type="submit">Save search settings</button></div>
     </form>
   </div>
 

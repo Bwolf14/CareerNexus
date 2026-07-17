@@ -13,7 +13,9 @@
         <p style="margin:0 0 .4rem;">
           Data source:
           <span class="src {{ 'live' if source != 'sample' else 'sample' }}">
-            {{ 'LIVE — ' ~ (sites | join(', ')) if source != 'sample' else 'SAMPLE DATA' }}
+            {% if source == 'sample' %}SAMPLE DATA
+            {% elif source == 'library' %}JOB LIBRARY — collected by earlier searches
+            {% else %}LIVE — {{ sites | join(', ') }}{% endif %}
           </span>
         </p>
         <p class="jobmeta" style="margin:0 0 .3rem;">Searched for:</p>

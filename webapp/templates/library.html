@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Job library — Career Nexus{% endblock %}
+
+{% block content %}
+  <h1>Job library</h1>
+  <p class="sub">Every live posting Career Nexus has collected, from every search on this
+     server. Searching here is instant — nothing is fetched from external job boards —
+     and it keeps postings the boards no longer return. Resume-driven searches
+     automatically blend matching library postings into their results.</p>
+
+  {% if stats %}
+    <div class="card">
+      <div class="library-stats">
+        <div class="stat"><span class="num">{{ '{:,}'.format(stats.postings) }}</span>
+          <span class="lbl">postings collected</span></div>
+        <div class="stat"><span class="num">{{ '{:,}'.format(stats.companies) }}</span>
+          <span class="lbl">companies</span></div>
+        <div class="stat"><span class="num">{{ stats.boards }}</span>
+          <span class="lbl">job boards</span></div>
+        {% if stats.oldest %}
+          <div class="stat"><span class="num">{{ stats.oldest.strftime('%b %d, %Y') if stats.oldest.strftime else stats.oldest }}</span>
+            <span class="lbl">collecting since</span></div>
+        {% endif %}
+      </div>
+      <div class="hint">The library grows on its own: every search anyone runs — including
+        scheduled alert searches — adds its postings here (deduplicated across boards).</div>
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Search the library</h2>
+    <form method="get" action="{{ url_for('library') }}">
+      <div class="formgrid">
+        <div class="row2">
+          <div>
+            <label class="field-label" for="q">Keywords <span class="opt">(comma-separated — matched against title, company, and search term)</span></label>
+            <input type="text" id="q" name="q" value="{{ q }}" placeholder="e.g. network technician, help desk" />
+          </div>
+          <div>
+            <label class="field-label" for="location">Location <span class="opt">(optional)</span></label>
+            <input type="text" id="location" name="location" value="{{ location }}" placeholder="e.g. Calgary" />
+            <div class="hint">Matches the posting's city; remote postings always pass.</div>
+          </div>
+        </div>
+      </div>
+      <div class="actions"><button class="btn big" type="submit">Search library →</button></div>
+    </form>
+  </div>
+
+  {% if error %}
+    <div class="banner error">{{ error }}</div>
+  {% endif %}
+
+  {% if q %}
+    <div class="card">
+      <h2>{{ results | length }} matching posting(s)</h2>
+      {% if results %}
+        <div id="joblist">
+          {% for job in results %}
+            <div class="job">
+              <div class="job-head">
+                <h3>
+                  {% if job.job_url %}<a href="{{ job.job_url }}" target="_blank" rel="noopener">{{ job.title or 'Untitled posting' }}</a>
+                  {% else %}{{ job.title or 'Untitled posting' }}{% endif %}
+                </h3>
+              </div>
+              <div>
+                <span class="company">{{ job.company or 'Unknown company' }}</span>
+                {% if job.location %}<span class="jobmeta"> · {{ job.location }}</span>{% endif %}
+              </div>
+              <div style="margin:.4rem 0 0;">
+                {% if job.is_remote %}<span class="badge remote">Remote</span>{% endif %}
+                {% if job.job_type %}<span class="badge">{{ job.job_type }}</span>{% endif %}
+                {% if job.source_site %}<span class="badge">{{ job.source_site }}</span>{% endif %}
+                {% if job.also_on %}<span class="badge">also on {{ job.also_on | join(', ') }}</span>{% endif %}
+                {% if job.date_posted %}<span class="badge">Posted {{ job.date_posted }}</span>{% endif %}
+                {% if job.search_term %}<span class="badge">↳ {{ job.search_term }}</span>{% endif %}
+              </div>
+              {% if job.description %}
+                <div class="desc">{{ job.description[:320] }}{% if job.description | length > 320 %}…{% endif %}</div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty">Nothing in the library matches that yet — run a few searches and
+          it will fill up.</p>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}

@@ -226,3 +226,26 @@ def test_models_installed(admin_client, monkeypatch):
     resp = admin_client.get("/api/models/installed")
     data = json.loads(resp.data)
     assert "qwen2.5:3b" in data["models"]
+
+
+# ---------------------------------------------------------------------------
+# Job-search settings (default depth)
+# ---------------------------------------------------------------------------
+def test_save_search_depth_default(admin_client, monkeypatch):
+    saved = {}
+    monkeypatch.setattr(adm.db, "set_app_settings", lambda values: saved.update(values))
+    resp = admin_client.post(
+        "/settings", data={"section": "search", "search_depth_default": "deep"}
+    )
+    assert resp.status_code == 302
+    assert saved == {"search_depth_default": "deep"}
+
+
+def test_save_search_depth_rejects_unknown_value(admin_client, monkeypatch):
+    def boom(values):
+        raise AssertionError("should not be saved")
+    monkeypatch.setattr(adm.db, "set_app_settings", boom)
+    resp = admin_client.post(
+        "/settings", data={"section": "search", "search_depth_default": "bogus"}
+    )
+    assert resp.status_code == 302  # redirects back with an error flash

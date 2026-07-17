@@ -207,6 +207,15 @@ before exposing it). From the portal an admin can:
   instead of blocking for the scrape.
 * **Cross-board dedup** — the same posting found on Indeed *and* Glassdoor is
   collapsed into one result (tagged "also on …").
+* **Search depth presets** — Quick / Standard / Deep on the search form control
+  how many postings per term and how far back to look (the admin portal sets
+  the default). Search terms are scraped **concurrently** (thread pool, capped
+  by `JOB_SCRAPE_CONCURRENCY`) so deeper searches stay fast.
+* **Job library** (`/library`) — every live posting any search collects is kept
+  in the database and instantly searchable, with no external board traffic.
+  Resume searches automatically blend in matching library postings (toggle on
+  the search form), so results grow — and external scraping shrinks — the more
+  the platform is used.
 * **OCR** — scanned/image PDFs (no embedded text) are run through Tesseract so
   they still parse; degrades to a `"failed"` status if the engine is absent.
 
@@ -255,8 +264,9 @@ works; the storage path is identical to a live run.
 | ----------------------- | -------------- | -------------------------------------------------- |
 | `JOB_SITES`             | `indeed,zip_recruiter,glassdoor` | Comma-separated boards (set to `indeed` for a faster demo) |
 | `JOB_COUNTRY`           | `Canada`       | Which country's Indeed site to search              |
-| `JOB_RESULTS_PER_QUERY` | `15`           | Postings requested per search term                 |
-| `JOB_HOURS_OLD`         | `168`          | Only postings newer than this many hours           |
+| `JOB_RESULTS_PER_QUERY` | `15`           | Postings per search term for the **Quick** preset (Standard = 50, Deep = 100) |
+| `JOB_HOURS_OLD`         | `168`          | Look-back hours for the **Quick** preset (Standard = 336, Deep = 720) |
+| `JOB_SCRAPE_CONCURRENCY`| `3`            | How many search terms are scraped at once          |
 | `JOB_RESULTS_DIR`       | `./job_results`| Where the JSON result files are written            |
 
 > **Note on `JOB_COUNTRY`:** JobSpy defaults Indeed to the US site, so a search

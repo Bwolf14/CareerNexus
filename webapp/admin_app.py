@@ -78,6 +78,14 @@ EMAIL_KEYS = [
 # their own numbers on their account page; nothing sends until these are set.
 SMS_KEYS = ["twilio_account_sid", "twilio_auth_token", "twilio_from_number"]
 
+# Job-search depth presets users can pick per search; the admin sets which one
+# is pre-selected (and used by retries/scheduled alert searches).
+DEPTH_CHOICES = [
+    {"key": "quick", "label": "Quick", "blurb": "~15 postings per term, last 7 days"},
+    {"key": "standard", "label": "Standard", "blurb": "~50 postings per term, last 2 weeks"},
+    {"key": "deep", "label": "Deep", "blurb": "~100 postings per term, up to 30 days"},
+]
+
 admin_app = Flask(__name__)
 admin_app.secret_key = os.environ.get(
     "ADMIN_SECRET_KEY", "careernexus-admin-demo-secret"
@@ -260,6 +268,8 @@ def settings():
             return _save_email_settings()
         if section == "sms":
             return _save_sms_settings()
+        if section == "search":
+            return _save_search_settings()
         flash("Unknown settings section.", "error")
         return redirect(url_for("settings"))
 
@@ -272,6 +282,12 @@ def settings():
         sms_settings = {k: (db.get_app_setting(k) or "") for k in SMS_KEYS}
     except Exception:
         sms_settings = {k: "" for k in SMS_KEYS}
+    try:
+        depth_default = (db.get_app_setting("search_depth_default") or "").strip()
+    except Exception:
+        depth_default = ""
+    if depth_default not in {d["key"] for d in DEPTH_CHOICES}:
+        depth_default = "standard"
 
     # Local catalog: annotate with detected RAM fit + which are installed.
     res = resources()
@@ -294,10 +310,25 @@ def settings():
         email=email_settings,
         sms=sms_settings,
         env_smtp_host=os.environ.get("SMTP_HOST", ""),
+        depth_choices=DEPTH_CHOICES,
+        depth_default=depth_default,
         catalog=catalog,
         res=res,
         local_url=LOCAL_OLLAMA_URL,
     )
+
+
+def _save_search_settings():
+    depth = (request.form.get("search_depth_default") or "").strip().lower()
+    if depth not in {d["key"] for d in DEPTH_CHOICES}:
+        flash("Unknown search depth.", "error")
+        return redirect(url_for("settings"))
+    try:
+        db.set_app_settings({"search_depth_default": depth})
+        flash("Search settings saved.", "info")
+    except Exception as exc:
+        flash(f"Could not save search settings: {exc}", "error")
+    return redirect(url_for("settings"))
 
 
 def _save_sms_settings():
