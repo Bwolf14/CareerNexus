@@ -104,8 +104,50 @@
       const fill = prog.querySelector('.fill');
       const stat = prog.querySelector('.pstat');
       prog.style.display = 'block';
+      stat.style.color = '';
+      fill.style.width = '0%';
       btn.disabled = true;
-      let lastCompleted = 0, lastTime = Date.now();
+
+      // Ollama streams PER-LAYER progress (each layer its own total/completed),
+      // so naive rendering makes the bar jump back to 0 on every layer and the
+      // speed spike wildly. Aggregate across layers, smooth the speed with an
+      // EMA, keep the bar monotonic, and throttle DOM writes.
+      const layers = new Map();       // digest -> {completed, total}
+      let phase = 'starting…';
+      let maxPct = 0;
+      let emaBps = null;
+      let lastSample = { bytes: 0, time: Date.now() };
+      let lastRender = 0;
+      let finished = false, failed = null;
+
+      function totals() {
+        let done = 0, total = 0;
+        layers.forEach(l => { done += l.completed || 0; total += l.total || 0; });
+        return { done, total };
+      }
+
+      function render(force) {
+        const now = Date.now();
+        if (!force && now - lastRender < 200) return;   // ≤5 updates/sec
+        lastRender = now;
+        const { done, total } = totals();
+        if (total > 0) {
+          const pct = Math.min(100, Math.floor((done / total) * 100));
+          maxPct = Math.max(maxPct, pct);               // never move backwards
+          fill.style.width = maxPct + '%';
+          const dt = (now - lastSample.time) / 1000;
+          if (dt >= 0.5) {
+            const bps = Math.max(0, (done - lastSample.bytes) / dt);
+            emaBps = emaBps === null ? bps : (0.3 * bps + 0.7 * emaBps);
+            lastSample = { bytes: done, time: now };
+          }
+          const speed = emaBps !== null && emaBps > 1 ? ' · ' + fmtBytes(emaBps) + '/s' : '';
+          stat.textContent = maxPct + '% (' + fmtBytes(done) + ' / ' + fmtBytes(total) + ')'
+                             + speed + ' — ' + phase;
+        } else {
+          stat.textContent = phase;
+        }
+      }
 
       try {
         const resp = await fetch('/api/models/pull', {
@@ -126,27 +168,25 @@
             if (!line.trim()) continue;
             let msg;
             try { msg = JSON.parse(line); } catch (e) { continue; }
-            if (msg.error) { stat.textContent = 'Error: ' + msg.error; stat.style.color = 'var(--danger)'; continue; }
-            if (msg.total && msg.completed != null) {
-              const pct = Math.floor((msg.completed / msg.total) * 100);
-              fill.style.width = pct + '%';
-              const now = Date.now();
-              const dt = (now - lastTime) / 1000;
-              let speed = '';
-              if (dt > 0.3) {
-                const bps = (msg.completed - lastCompleted) / dt;
-                speed = ' · ' + fmtBytes(bps) + '/s';
-                lastCompleted = msg.completed; lastTime = now;
-              }
-              stat.textContent = `${pct}% (${fmtBytes(msg.completed)} / ${fmtBytes(msg.total)})${speed} — ${msg.status || ''}`;
-            } else {
-              stat.textContent = msg.status || '';
+            if (msg.error) { failed = msg.error; continue; }
+            if (msg.status) phase = msg.status;
+            if (msg.digest && msg.total) {
+              layers.set(msg.digest, {
+                completed: msg.completed || 0,
+                total: msg.total,
+              });
             }
-            if (msg.status === 'success') {
-              fill.style.width = '100%';
-              stat.textContent = 'Downloaded ✓ — reload the page to see it as installed.';
-            }
+            if (msg.status === 'success') finished = true;
           }
+          render(false);
+        }
+        render(true);
+        if (failed) {
+          stat.textContent = 'Error: ' + failed;
+          stat.style.color = 'var(--danger)';
+        } else if (finished) {
+          fill.style.width = '100%';
+          stat.textContent = 'Downloaded ✓ — reload the page to see it as installed.';
         }
       } catch (err) {
         stat.textContent = 'Download failed: ' + err;

@@ -667,6 +667,21 @@ def upload():
     return redirect(url_for("profile", resume_id=resume_id, f=file.filename))
 
 
+@app.route("/resume/<int:resume_id>/delete", methods=["POST"])
+@login_required
+def resume_delete(resume_id: int):
+    """Delete one of the user's own resumes (past searches keep their results)."""
+    try:
+        deleted = db.delete_resume(current_user()["id"], resume_id)
+    except Exception as exc:
+        flash(f"Could not delete that resume: {exc}", "error")
+        return redirect(url_for("index"))
+    if not deleted:
+        abort(404, description="No resume of yours with that id.")
+    flash("Resume deleted. Past searches that used it keep their results.", "info")
+    return redirect(url_for("index"))
+
+
 @app.route("/resume/<int:resume_id>/preview")
 @login_required
 def resume_preview(resume_id: int):

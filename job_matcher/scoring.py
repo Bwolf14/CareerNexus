@@ -140,11 +140,17 @@ def _score_one(
     job_text = f"{job.get('title') or ''} {job.get('description') or ''}".lower()
 
     # --- Skill overlap: up to 45 points --------------------------------------
+    # Square-root curve: postings rarely name more than a handful of a
+    # resume's skills, so a linear /12 scale capped real-world scores in the
+    # 40s-50s. With sqrt, 4 of 8 matched skills already earns ~32/45.
     matched = _matched_skills(resume_skills, job_text)
     if resume_skills:
-        denom = min(len(resume_skills), 12)
-        score += 45 * min(len(matched) / denom, 1.0)
+        denom = min(len(resume_skills), 8)
+        score += 45 * min(len(matched) / denom, 1.0) ** 0.5
     if matched:
+        # Baseline relevance: naming even one of the candidate's skills means
+        # the posting is genuinely in their field.
+        score += 10
         shown = ", ".join(matched[:5])
         more = f" (+{len(matched) - 5} more)" if len(matched) > 5 else ""
         reasons.append(
@@ -159,12 +165,15 @@ def _score_one(
             "Uses skills you said you want to work with: " + ", ".join(wanted[:4])
         )
 
-    # --- Title alignment: up to 20 points -------------------------------------
+    # --- Title alignment: up to 25 points -------------------------------------
+    # Coverage of up to three meaningful title tokens: sharing 2-3 core words
+    # ("network technician") is a strong match even when the posting's full
+    # title carries extra qualifiers that a linear all-tokens ratio punished.
     job_title_tokens = _tokens(job.get("title"))
     overlap = resume_title_tokens & job_title_tokens
     if job_title_tokens and resume_title_tokens:
-        ratio = len(overlap) / len(job_title_tokens)
-        score += 20 * min(ratio, 1.0)
+        ratio = len(overlap) / max(1, min(len(job_title_tokens), 3))
+        score += 25 * min(ratio, 1.0)
         if ratio >= 0.5:
             reasons.append("Job title closely matches your experience")
 

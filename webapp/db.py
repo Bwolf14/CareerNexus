@@ -400,6 +400,30 @@ def get_user_by_id(user_id: int) -> Optional[dict[str, Any]]:
         conn.close()
 
 
+def delete_resume(user_id: int, resume_id: int) -> bool:
+    """Delete a resume the user owns. Returns False when it isn't theirs.
+
+    ``resume_experience``/``resume_education`` cascade away with the row;
+    ``job_searches.resume_id`` becomes NULL, so past searches survive.
+    """
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM user_resumes WHERE id = %s AND user_id = %s",
+                (resume_id, user_id),
+            )
+            changed = cur.rowcount
+        conn.commit()
+        return changed > 0
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def get_resume_owner(resume_id: int) -> Optional[int]:
     """The user_id that owns a resume, or None if the resume doesn't exist."""
     conn = get_connection()
