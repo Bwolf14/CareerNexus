@@ -74,6 +74,10 @@ EMAIL_KEYS = [
     "smtp_from", "smtp_use_tls", "app_base_url",
 ]
 
+# SMS (Twilio) settings — the service side of per-user SMS alerts. Users add
+# their own numbers on their account page; nothing sends until these are set.
+SMS_KEYS = ["twilio_account_sid", "twilio_auth_token", "twilio_from_number"]
+
 admin_app = Flask(__name__)
 admin_app.secret_key = os.environ.get(
     "ADMIN_SECRET_KEY", "careernexus-admin-demo-secret"
@@ -254,6 +258,8 @@ def settings():
             return _save_ai_settings()
         if section == "email":
             return _save_email_settings()
+        if section == "sms":
+            return _save_sms_settings()
         flash("Unknown settings section.", "error")
         return redirect(url_for("settings"))
 
@@ -262,6 +268,10 @@ def settings():
     except Exception:
         email_settings = {k: "" for k in EMAIL_KEYS}
     email_settings.setdefault("app_base_url", "")
+    try:
+        sms_settings = {k: (db.get_app_setting(k) or "") for k in SMS_KEYS}
+    except Exception:
+        sms_settings = {k: "" for k in SMS_KEYS}
 
     # Local catalog: annotate with detected RAM fit + which are installed.
     res = resources()
@@ -282,11 +292,25 @@ def settings():
         option_specs=OPTION_SPECS,
         settings_file=settings_path(),
         email=email_settings,
+        sms=sms_settings,
         env_smtp_host=os.environ.get("SMTP_HOST", ""),
         catalog=catalog,
         res=res,
         local_url=LOCAL_OLLAMA_URL,
     )
+
+
+def _save_sms_settings():
+    values = {}
+    for key in SMS_KEYS:
+        raw = (request.form.get(key) or "").strip()
+        values[key] = raw or None  # empty clears the override (falls back to env)
+    try:
+        db.set_app_settings(values)
+        flash("SMS settings saved.", "info")
+    except Exception as exc:
+        flash(f"Could not save SMS settings: {exc}", "error")
+    return redirect(url_for("settings"))
 
 
 def _save_ai_settings():

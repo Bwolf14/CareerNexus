@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 
 from job_scraper import dedupe_cross_board
 
-from . import configure_logging, db, email_utils, search_service
+from . import configure_logging, db, email_utils, notifications, search_service
 
 configure_logging()
 log = logging.getLogger("careernexus.worker")
@@ -102,11 +102,28 @@ def scheduler_tick(now: datetime) -> int:
     return enqueued
 
 
+def _matches_criteria(job: dict, params: dict) -> bool:
+    """Apply the alert's specific criteria (company / title-contains) to one job.
+
+    These narrow a broad resume-driven search to e.g. "Google" + "engineer" so
+    the alert only fires for genuinely relevant new postings.
+    """
+    company_filter = (params.get("filter_company") or "").strip().lower()
+    title_filter = (params.get("filter_title") or "").strip().lower()
+    if company_filter and company_filter not in (job.get("company") or "").lower():
+        return False
+    if title_filter and title_filter not in (job.get("title") or "").lower():
+        return False
+    return True
+
+
 def _handle_alert(saved_search_id: int, new_search_id: int) -> None:
-    """Email the user postings in the new run that weren't in the previous one."""
+    """Notify the user of postings in the new run that weren't in the previous
+    one AND match the alert's criteria (company/title filters)."""
     ss = db.get_saved_search(saved_search_id)
     if not ss:
         return
+    params = ss.get("params") or {}
     new_jobs = dedupe_cross_board(db.get_jobs_for_search(new_search_id))
     old_search_id = ss.get("last_search_id")
 
@@ -115,29 +132,29 @@ def _handle_alert(saved_search_id: int, new_search_id: int) -> None:
             j["dedup_key"]
             for j in dedupe_cross_board(db.get_jobs_for_search(old_search_id))
         }
-        fresh = [j for j in new_jobs if j.get("dedup_key") not in old_keys]
+        fresh = [
+            j for j in new_jobs
+            if j.get("dedup_key") not in old_keys and _matches_criteria(j, params)
+        ]
         if fresh:
-            _email_alert(ss, new_search_id, fresh)
+            _send_alert(ss, new_search_id, fresh)
         else:
-            log.info("saved_search %s: no new postings this run", saved_search_id)
+            log.info("saved_search %s: no new postings matching the criteria",
+                     saved_search_id)
     else:
         log.info(
-            "saved_search %s: first run (baseline of %s postings, no email)",
+            "saved_search %s: first run (baseline of %s postings, no alert)",
             saved_search_id, len(new_jobs),
         )
 
     db.set_saved_search_result(saved_search_id, new_search_id)
 
 
-def _email_alert(ss: dict, search_id: int, fresh: list) -> None:
-    email = db.get_user_email(ss["user_id"])
-    if not email:
-        return
+def _send_alert(ss: dict, search_id: int, fresh: list) -> None:
+    """Deliver one alert on every channel the user configured."""
     label = ss.get("label") or "your saved search"
-    lines = [
-        f"{len(fresh)} new job posting(s) matched {label}:",
-        "",
-    ]
+    subject = f"Career Nexus — {len(fresh)} new job match(es) for {label}"
+    lines = []
     for j in fresh[:ALERT_MAX_LISTED]:
         bits = " · ".join(
             b for b in [j.get("title"), j.get("company"), j.get("location")] if b
@@ -147,15 +164,14 @@ def _email_alert(ss: dict, search_id: int, fresh: list) -> None:
             lines.append(f"  {j['job_url']}")
     if len(fresh) > ALERT_MAX_LISTED:
         lines.append(f"…and {len(fresh) - ALERT_MAX_LISTED} more.")
-    lines += [
-        "",
-        f"See them all: {email_utils.base_url()}/matches/{search_id}",
-    ]
-    email_utils.send_email(
-        email, f"Career Nexus — {len(fresh)} new job match(es)", "\n".join(lines)
+    lines.append(f"\nSee them all: {email_utils.base_url()}/matches/{search_id}")
+    body = "\n".join(lines)
+
+    sent = notifications.notify_user(
+        ss["user_id"], subject, body, email_fn=email_utils.send_email
     )
-    log.info("emailed %s new postings to %s (saved_search %s)",
-             len(fresh), email, ss["id"])
+    log.info("alert for saved_search %s: %s new postings, channels %s",
+             ss["id"], len(fresh), sent)
 
 
 # ---------------------------------------------------------------------------

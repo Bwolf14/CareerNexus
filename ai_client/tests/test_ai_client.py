@@ -186,6 +186,99 @@ def test_run_chat_uses_resolved_slot(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Cloud (BYO key) routing + per-model timeouts
+# ---------------------------------------------------------------------------
+def test_run_chat_routes_to_cloud_when_enabled(monkeypatch):
+    from ai_client import cloud as cloud_mod
+    cfg = _cfg()  # no backend slots at all
+    cfg["cloud"] = {"enabled": True, "provider": "openai",
+                    "api_key": "sk-x", "model": "gpt-4o-mini"}
+    seen = {}
+    monkeypatch.setattr(tiered, "chat_cloud",
+                        lambda cloud, messages: seen.update(model=cloud["model"]) or "cloud says hi")
+    out = tiered.run_chat(cfg, [{"role": "user", "content": "hi"}])
+    assert out == "cloud says hi"
+    assert seen["model"] == "gpt-4o-mini"
+
+
+def test_cloud_openai_payload_includes_speed_preprompt(monkeypatch):
+    from ai_client import cloud
+    captured = {}
+
+    class FakeResp:
+        status_code = 200
+        ok = True
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    def fake_post(url, json=None, timeout=None, headers=None):
+        captured["url"] = url
+        captured["body"] = json
+        captured["headers"] = headers
+        return FakeResp()
+
+    monkeypatch.setattr(cloud.requests, "post", fake_post)
+    out = cloud.chat_cloud(
+        {"enabled": True, "provider": "openai", "api_key": "sk-x", "model": "gpt-4o-mini"},
+        [{"role": "system", "content": "You are X."},
+         {"role": "user", "content": "hi"}],
+    )
+    assert out == "ok"
+    assert "openai.com" in captured["url"]
+    first = captured["body"]["messages"][0]
+    assert first["role"] == "system"
+    # The hidden pre-prompt (no thinking, fast) leads the system message.
+    assert first["content"].startswith(cloud.SPEED_PROMPT)
+    assert "You are X." in first["content"]
+    assert captured["headers"]["Authorization"] == "Bearer sk-x"
+
+
+def test_cloud_anthropic_payload(monkeypatch):
+    from ai_client import cloud
+    captured = {}
+
+    class FakeResp:
+        status_code = 200
+        ok = True
+        def json(self):
+            return {"content": [{"type": "text", "text": "claude ok"}]}
+
+    monkeypatch.setattr(cloud.requests, "post",
+                        lambda url, json=None, timeout=None, headers=None:
+                        captured.update(url=url, body=json, headers=headers) or FakeResp())
+    out = cloud.chat_cloud(
+        {"enabled": True, "provider": "anthropic", "api_key": "sk-ant", "model": "claude-sonnet-5"},
+        [{"role": "system", "content": "Sys."}, {"role": "user", "content": "hi"}],
+    )
+    assert out == "claude ok"
+    assert "anthropic.com" in captured["url"]
+    assert captured["body"]["system"].startswith(cloud.SPEED_PROMPT)
+    assert all(m["role"] != "system" for m in captured["body"]["messages"])
+    assert captured["headers"]["x-api-key"] == "sk-ant"
+
+
+def test_per_model_timeouts_used(monkeypatch):
+    cfg = _cfg(primary={"enabled": True, "base_url": "http://p:1", "model": "m1"})
+    cfg["options"] = {"primary": {
+        "connect_timeout": {"on": True, "value": 2},
+        "read_timeout": {"on": True, "value": 60},
+    }}
+    monkeypatch.setattr(
+        tiered, "resolve_slot",
+        lambda config, probe=True: {"name": "primary", "slot": {},
+                                    "options": cfg["options"]["primary"],
+                                    "base": "http://p:1", "model": "m1"})
+    seen = {}
+    monkeypatch.setattr(tiered.client, "chat",
+                        lambda base, model, messages, **kw: seen.update(kw) or "x")
+    tiered.run_chat(cfg, [{"role": "user", "content": "hi"}])
+    assert seen["connect_timeout"] == 2.0
+    assert seen["read_timeout"] == 60.0
+    # And timeouts never leak into the Ollama sampling options payload.
+    assert "connect_timeout" not in (seen.get("options") or {})
+
+
+# ---------------------------------------------------------------------------
 # JSON extraction
 # ---------------------------------------------------------------------------
 def test_extract_json_handles_fences_prose_and_think_blocks():

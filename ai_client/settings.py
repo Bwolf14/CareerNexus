@@ -76,6 +76,25 @@ OPTION_SPECS: list[dict[str, Any]] = [
                      "low-RAM machine so the model unloads and frees memory.",
     },
     {
+        "key": "connect_timeout", "label": "Connect timeout", "kind": "value",
+        "value_type": "int", "default_on": True, "default_value": 4,
+        "min": 1, "max": 30, "unit": "seconds",
+        "desc": "How long to wait for this server to accept the connection "
+                "before treating it as down and falling to the next model.",
+        "recommend": "Keep ON and short (2–5 s) — this is what an offline server "
+                     "costs every prompt before the fallback kicks in.",
+    },
+    {
+        "key": "read_timeout", "label": "Response timeout", "kind": "value",
+        "value_type": "int", "default_on": True, "default_value": 180,
+        "min": 10, "max": 600, "unit": "seconds",
+        "desc": "How long to wait for this model's full answer before giving up "
+                "on the request.",
+        "recommend": "180 s suits CPU inference (first response includes model "
+                     "load). Lower it (~60 s) for a fast GPU box so a stuck "
+                     "model falls back to safe mode sooner.",
+    },
+    {
         "key": "num_predict", "label": "Max response tokens", "kind": "value",
         "value_type": "int", "default_on": True, "default_value": 1024,
         "min": 64, "max": 8192, "unit": "tokens",
@@ -300,10 +319,13 @@ def slot_is_configured(slot: dict[str, Any]) -> bool:
 
 
 def is_configured(config: dict[str, Any]) -> bool:
-    """True when at least one slot is enabled with a base URL + model.
+    """True when AI can be offered: a user cloud key OR any enabled slot.
 
     This is a cheap check (no network) used to decide whether to *offer* AI in
     the UI; actual reachability is tested per request (see ai_client.tiered).
     """
+    cloud = (config or {}).get("cloud") or {}
+    if (cloud.get("enabled") and cloud.get("api_key") and cloud.get("model")):
+        return True
     slots = (config or {}).get("slots") or {}
     return any(slot_is_configured(slots.get(name) or {}) for name in SLOTS)

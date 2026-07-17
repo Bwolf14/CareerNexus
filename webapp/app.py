@@ -41,6 +41,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 from datetime import datetime, timedelta
 from typing import Optional
@@ -86,6 +87,7 @@ from . import (
     configure_logging,
     db,
     email_utils,
+    notifications,
     plan_store,
     search_service,
 )
@@ -251,6 +253,32 @@ def _saved_keys() -> set:
         return db.saved_dedup_keys(current_user()["id"])
     except Exception:
         return set()
+
+
+def _ai_config() -> dict:
+    """The AI config for THIS request's user.
+
+    Starts from the admin-configured tiered slots; if the user enabled their
+    own cloud API key (OpenAI/Anthropic), it's attached as ``cloud`` and takes
+    precedence — the request goes to the internet provider instead of the
+    backend models (see ai_client.tiered.run_chat).
+    """
+    config = load_settings()
+    try:
+        us = db.get_user_settings(current_user()["id"])
+    except Exception:
+        us = {}
+    if us.get("ai_cloud_enabled") and us.get("ai_api_key") and us.get("ai_model"):
+        config = {
+            **config,
+            "cloud": {
+                "enabled": True,
+                "provider": us.get("ai_provider") or "openai",
+                "api_key": us.get("ai_api_key"),
+                "model": us.get("ai_model"),
+            },
+        }
+    return config
 
 
 # ---------------------------------------------------------------------------
@@ -452,7 +480,75 @@ def logout():
 @app.route("/account")
 @login_required
 def account():
-    return render_template("account.html", account=current_user())
+    settings = db.get_user_settings(current_user()["id"])
+    return render_template(
+        "account.html",
+        account=current_user(),
+        settings=settings,
+        sms_ready=notifications.sms_configured(),
+    )
+
+
+@app.route("/account/notifications", methods=["POST"])
+@login_required
+def account_notifications():
+    """Save the user's own notification channels (phone number, Discord webhook)."""
+    phone = (request.form.get("phone_number") or "").strip()[:32]
+    webhook = (request.form.get("discord_webhook") or "").strip()[:500]
+    if phone and not re.fullmatch(r"\+?[0-9 ()\-\.]{7,20}", phone):
+        flash("That phone number doesn't look valid — use digits, e.g. +14035550142.", "error")
+        return redirect(url_for("account"))
+    if webhook and not notifications.valid_discord_webhook(webhook):
+        flash("That doesn't look like a Discord webhook URL "
+              "(it should start with https://discord.com/api/webhooks/…).", "error")
+        return redirect(url_for("account"))
+    try:
+        db.upsert_user_settings(
+            current_user()["id"],
+            phone_number=phone or None,
+            discord_webhook=webhook or None,
+        )
+        flash("Notification settings saved.", "info")
+    except Exception as exc:
+        flash(f"Could not save notification settings: {exc}", "error")
+    return redirect(url_for("account"))
+
+
+@app.route("/account/ai", methods=["POST"])
+@login_required
+def account_ai():
+    """Save the user's bring-your-own cloud AI settings (behind the big warning)."""
+    enabled = bool(request.form.get("ai_cloud_enabled"))
+    provider = (request.form.get("ai_provider") or "openai").strip().lower()
+    api_key = (request.form.get("ai_api_key") or "").strip()[:255]
+    model = (request.form.get("ai_model") or "").strip()[:100]
+
+    if provider not in ("openai", "anthropic"):
+        provider = "openai"
+    if enabled and (not api_key or not model):
+        flash("To enable the internet AI you need both an API key and a model name.", "error")
+        return redirect(url_for("account"))
+    if enabled and not request.form.get("ai_acknowledge"):
+        flash("You must tick the acknowledgement box to enable the internet AI.", "error")
+        return redirect(url_for("account"))
+
+    try:
+        db.upsert_user_settings(
+            current_user()["id"],
+            ai_cloud_enabled=enabled,
+            ai_provider=provider,
+            ai_api_key=api_key or None,
+            ai_model=model or None,
+        )
+        flash(
+            "Internet AI enabled — your AI requests now go to "
+            f"{provider} using your key." if enabled else "Internet AI disabled — "
+            "requests use the locally configured models again.",
+            "info",
+        )
+    except Exception as exc:
+        flash(f"Could not save AI settings: {exc}", "error")
+    return redirect(url_for("account"))
 
 
 @app.route("/account/export")
@@ -765,7 +861,7 @@ def matches(search_id: int):
         search_id=search_id,
         db_error=None,
         contact_name=search_row.get("username"),
-        ai_on=is_configured(load_settings()),
+        ai_on=is_configured(_ai_config()),
         **_step_urls(resume_id=search_row.get("resume_id"), search_id=search_id),
     )
 
@@ -784,7 +880,7 @@ def _questionnaire_for(
     the deterministic template questions whenever the AI is unconfigured or
     fails.
     """
-    ai_settings = load_settings()
+    ai_settings = _ai_config()
     ai_status = {
         "configured": is_configured(ai_settings),
         "model": configured_model(ai_settings),
@@ -949,7 +1045,7 @@ def _run_analysis(
     Returns a JSON-friendly dict: ``{ready, used, safe_mode, overall,
     per_index (str→text), model, error}``.
     """
-    ai_settings = load_settings()
+    ai_settings = _ai_config()
     model = configured_model(ai_settings)
     base = {"ready": True, "used": False, "safe_mode": True,
             "overall": None, "per_index": {}, "model": model, "error": None}
@@ -1002,7 +1098,7 @@ def recommendations(search_id: int):
     # AI analysis runs asynchronously (see /recommendations/<id>/ai) so the page
     # loads immediately with the deterministic shortlist. If a cached analysis
     # already exists we attach it inline and skip the "thinking" banner.
-    ai_settings = load_settings()
+    ai_settings = _ai_config()
     ai_configured = is_configured(ai_settings)
     model = configured_model(ai_settings)
     ai_status = {"configured": ai_configured, "model": model, "used": False, "error": None}
@@ -1187,7 +1283,7 @@ def api_company_info():
         return jsonify({"company": company, "profile": profile})
 
     # part=ai — grounded overview, cached per company + model.
-    ai_settings = load_settings()
+    ai_settings = _ai_config()
     model = configured_model(ai_settings)
     if not is_configured(ai_settings):
         return jsonify({"company": company, "ai": None, "safe_mode": True})
@@ -1358,6 +1454,20 @@ def alerts_create():
     _require_owned_resume(resume_id)
 
     params = _read_job_settings(request.form)
+    # Specific alert criteria: only postings matching these fire the alert
+    # (e.g. company "Google" + title contains "engineer"). The company is also
+    # added as a search keyword so the scrape actually looks for it.
+    filter_company = (request.form.get("filter_company") or "").strip()[:120]
+    filter_title = (request.form.get("filter_title") or "").strip()[:120]
+    if filter_company:
+        params["filter_company"] = filter_company
+        if filter_company.lower() not in [k.lower() for k in params["keywords"]]:
+            params["keywords"] = [filter_company] + params["keywords"]
+    if filter_title:
+        params["filter_title"] = filter_title
+        if filter_title.lower() not in [k.lower() for k in params["keywords"]]:
+            params["keywords"] = params["keywords"] + [filter_title]
+
     label = (request.form.get("label") or "").strip() or None
     frequency = (request.form.get("frequency") or "daily").strip().lower()
     if frequency not in ALERT_FREQUENCIES:
@@ -1411,7 +1521,7 @@ def tailor(search_id: int, dedup_key: str):
     if job is None:
         abort(404, description="That posting isn't in this search anymore.")
 
-    ai_settings = load_settings()
+    ai_settings = _ai_config()
     ai_status = {"configured": is_configured(ai_settings),
                  "model": configured_model(ai_settings), "used": False, "error": None}
     tailoring = None

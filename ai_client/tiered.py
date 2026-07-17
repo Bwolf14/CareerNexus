@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from . import client
 from .client import AIClientError
+from .cloud import chat_cloud, cloud_is_configured
 from .settings import (
     OPTION_SPECS,
     SLOTS,
@@ -89,8 +90,33 @@ def resolve_slot(config: dict[str, Any], *, probe: bool = True) -> Optional[dict
     return None
 
 
+def slot_timeouts(slot_options: dict[str, Any], config: dict[str, Any]) -> tuple[float, float]:
+    """(connect, read) timeouts for one slot — per-model matrix values when on,
+    else the global defaults."""
+
+    def pick(key: str, fallback: float) -> float:
+        entry = (slot_options or {}).get(key) or {}
+        if entry.get("on") and entry.get("value") is not None:
+            try:
+                return float(entry["value"])
+            except (TypeError, ValueError):
+                pass
+        return fallback
+
+    return (
+        pick("connect_timeout", float((config or {}).get("connect_timeout") or 4.0)),
+        pick("read_timeout", float((config or {}).get("read_timeout") or 180.0)),
+    )
+
+
 def configured_model(config: dict[str, Any]) -> Optional[str]:
-    """The model of the first configured slot (no network) — for UI labels."""
+    """The model that would serve a prompt (no network) — for UI labels.
+
+    A user's enabled cloud key takes precedence over the backend slots.
+    """
+    cloud = (config or {}).get("cloud") or {}
+    if cloud_is_configured(cloud):
+        return cloud.get("model")
     slots = (config or {}).get("slots") or {}
     for name in SLOTS:
         slot = slots.get(name) or {}
@@ -100,7 +126,10 @@ def configured_model(config: dict[str, Any]) -> Optional[str]:
 
 
 def active_status(config: dict[str, Any]) -> dict[str, Any]:
-    """For the UI/banner: which slot (if any) would serve the next prompt."""
+    """For the UI/banner: which model (if any) would serve the next prompt."""
+    cloud = (config or {}).get("cloud") or {}
+    if cloud_is_configured(cloud):
+        return {"available": True, "slot": "cloud", "model": cloud.get("model")}
     active = resolve_slot(config, probe=True)
     if active is None:
         return {"available": False, "slot": None, "model": None}
@@ -108,17 +137,23 @@ def active_status(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_chat(config: dict[str, Any], messages: list[dict[str, str]]) -> str:
-    """Resolve an available slot and run one chat; raise if none are usable.
+    """Route one chat: the user's cloud key (if enabled) wins, else the first
+    reachable backend slot. Raise if nothing is usable.
 
     Callers treat :class:`AIClientError` as "fall back to the deterministic
     (safe-mode) behaviour".
     """
+    cloud = (config or {}).get("cloud") or {}
+    if cloud_is_configured(cloud):
+        return chat_cloud(cloud, messages)
+
     active = resolve_slot(config, probe=True)
     if active is None:
         raise AIClientError(
             "No AI model is available (none enabled/reachable) — running in safe mode."
         )
     think, keep_alive, options = build_options(active["options"])
+    connect_timeout, read_timeout = slot_timeouts(active["options"], config)
     return client.chat(
         active["base"],
         active["model"],
@@ -126,6 +161,6 @@ def run_chat(config: dict[str, Any], messages: list[dict[str, str]]) -> str:
         think=think,
         keep_alive=keep_alive,
         options=options,
-        connect_timeout=float(config.get("connect_timeout") or 4.0),
-        read_timeout=float(config.get("read_timeout") or 180.0),
+        connect_timeout=connect_timeout,
+        read_timeout=read_timeout,
     )
