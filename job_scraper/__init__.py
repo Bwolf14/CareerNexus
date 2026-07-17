@@ -24,9 +24,12 @@ from __future__ import annotations
 from .output import write_results_json
 from .queries import build_queries_from_resume
 from .scraper import (
+    DEFAULT_DEPTH,
     DEFAULT_SITES,
+    DEPTH_PRESETS,
     dedupe_cross_board,
     posting_dedup_key,
+    resolve_depth,
     scrape_jobs_for_queries,
 )
 
@@ -36,5 +39,8 @@ __all__ = [
     "write_results_json",
     "dedupe_cross_board",
     "posting_dedup_key",
+    "resolve_depth",
+    "DEPTH_PRESETS",
+    "DEFAULT_DEPTH",
     "DEFAULT_SITES",
 ]

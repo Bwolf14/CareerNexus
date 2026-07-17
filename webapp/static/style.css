@@ -591,3 +591,10 @@ pre.json { background: var(--inset); border: 1px solid var(--border-soft); borde
                      font-weight: 700; background: var(--card); }
 .settings-subnav a:hover { color: var(--text); border-color: var(--accent); text-decoration: none; }
 .card[id^="sec-"] { scroll-margin-top: 3.4rem; }
+
+/* Job library stats row */
+.library-stats { display: flex; flex-wrap: wrap; gap: 1.6rem; margin: .2rem 0 .6rem; }
+.library-stats .stat .num { display: block; font-size: 1.5rem; font-weight: 800;
+                            color: var(--accent); line-height: 1.15; }
+.library-stats .stat .lbl { font-size: .72rem; color: var(--faint); font-weight: 700;
+                            letter-spacing: .05em; text-transform: uppercase; }

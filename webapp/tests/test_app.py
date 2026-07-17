@@ -580,3 +580,70 @@ def test_logout_clears_session(client):
     assert resp.status_code == 302
     with client.session_transaction() as sess:
         assert "user_id" not in sess
+
+
+# ---------------------------------------------------------------------------
+# Search depth presets + job library
+# ---------------------------------------------------------------------------
+def test_read_job_settings_depth_and_corpus_toggle(monkeypatch):
+    from werkzeug.datastructures import MultiDict
+
+    monkeypatch.setattr(app_module.db, "get_app_setting", lambda key: None)
+
+    s = app_module._read_job_settings(MultiDict({"depth": "deep"}))
+    assert s["depth"] == "deep"
+    assert s["use_corpus"] is True  # no checkbox in the form → default on
+
+    s = app_module._read_job_settings(MultiDict({"depth": "bogus"}))
+    assert s["depth"] == app_module.DEFAULT_DEPTH
+
+    # Hidden "0" + checked "1" → on; hidden "0" alone → off.
+    s = app_module._read_job_settings(
+        MultiDict([("use_corpus", "0"), ("use_corpus", "1")])
+    )
+    assert s["use_corpus"] is True
+    s = app_module._read_job_settings(MultiDict([("use_corpus", "0")]))
+    assert s["use_corpus"] is False
+
+
+def test_default_depth_comes_from_admin_setting(monkeypatch):
+    monkeypatch.setattr(app_module.db, "get_app_setting",
+                        lambda key: "quick" if key == "search_depth_default" else None)
+    assert app_module._default_depth() == "quick"
+    monkeypatch.setattr(app_module.db, "get_app_setting", lambda key: "bogus")
+    assert app_module._default_depth() == app_module.DEFAULT_DEPTH
+
+
+def test_profile_shows_depth_and_library_controls(client, monkeypatch):
+    monkeypatch.setattr(app_module.db, "get_app_setting", lambda key: None)
+    resp = client.get("/profile/3")
+    assert resp.status_code == 200
+    assert b'name="depth"' in resp.data
+    assert b"Standard" in resp.data and b"Deep" in resp.data
+    assert b'name="use_corpus"' in resp.data
+
+
+def test_library_page_stats_and_search(client, monkeypatch):
+    monkeypatch.setattr(
+        app_module.db, "corpus_stats",
+        lambda: {"postings": 1234, "companies": 200, "boards": 3,
+                 "oldest": None, "newest": None},
+    )
+    monkeypatch.setattr(
+        app_module.db, "search_corpus",
+        lambda terms, location=None, max_age_days=30, limit=300: list(JOBS),
+    )
+    resp = client.get("/library")
+    assert resp.status_code == 200
+    assert b"1,234" in resp.data
+    assert b"Search the library" in resp.data
+
+    resp = client.get("/library?q=network")
+    assert resp.status_code == 200
+    assert b"Northwind" in resp.data
+
+
+def test_library_requires_login(anon_client):
+    resp = anon_client.get("/library")
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]

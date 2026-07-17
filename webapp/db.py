@@ -889,6 +889,103 @@ def jobs_by_company(
         conn.close()
 
 
+def search_corpus(
+    terms: list[str],
+    location: Optional[str] = None,
+    max_age_days: int = 30,
+    limit: int = 300,
+) -> list[dict[str, Any]]:
+    """Search the internal job library — every live posting ever scraped.
+
+    Postings from all users' searches are pooled (job ads are public data), so
+    each new search benefits from what earlier scrapes already collected —
+    more results without extra calls to the external boards. Sample postings
+    are excluded, and only postings scraped (or dated) within
+    ``max_age_days`` are considered so long-dead ads don't resurface.
+
+    Matching is a case-insensitive substring test of each term against the
+    title, the original search term, and the company name. When ``location``
+    is given, postings must mention its city (first comma segment) or be
+    remote. Rows come back in the normalised job-dict shape, newest first;
+    callers should cross-board-dedupe before use.
+    """
+    terms = [t.strip() for t in terms if t and t.strip()]
+    if not terms:
+        return []
+
+    clauses = []
+    args: list[Any] = []
+    term_bits = []
+    for term in terms[:10]:
+        like = f"%{term}%"
+        term_bits.append(
+            "(j.title LIKE %s OR j.search_term LIKE %s OR j.company LIKE %s)"
+        )
+        args.extend([like, like, like])
+    clauses.append("(" + " OR ".join(term_bits) + ")")
+
+    city = (location or "").split(",")[0].strip()
+    if city:
+        clauses.append("(j.location LIKE %s OR j.is_remote = 1)")
+        args.append(f"%{city}%")
+
+    clauses.append(
+        "(j.date_posted >= CURRENT_DATE - INTERVAL %s DAY "
+        "OR (j.date_posted IS NULL AND j.scraped_at >= NOW() - INTERVAL %s DAY))"
+    )
+    args.extend([max_age_days, max_age_days])
+    clauses.append("(j.source_site IS NULL OR j.source_site <> 'sample')")
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT j.source_site, j.external_id, j.title, j.company,
+                       j.location, j.job_type, j.is_remote, j.salary_min,
+                       j.salary_max, j.salary_currency, j.salary_interval,
+                       j.description, j.link AS job_url, j.search_term,
+                       j.date_posted, j.search_id
+                FROM jobs j
+                WHERE {' AND '.join(clauses)}
+                ORDER BY (j.date_posted IS NULL), j.date_posted DESC, j.id DESC
+                LIMIT %s
+                """,
+                (*args, limit),
+            )
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def corpus_stats() -> dict[str, Any]:
+    """Headline numbers for the job library page (live postings only)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(DISTINCT source_site, external_id) AS postings,
+                       COUNT(DISTINCT company) AS companies,
+                       COUNT(DISTINCT source_site) AS boards,
+                       MIN(scraped_at) AS oldest,
+                       MAX(scraped_at) AS newest
+                FROM jobs
+                WHERE source_site IS NULL OR source_site <> 'sample'
+                """
+            )
+            row = cur.fetchone() or {}
+            return {
+                "postings": row.get("postings") or 0,
+                "companies": row.get("companies") or 0,
+                "boards": row.get("boards") or 0,
+                "oldest": row.get("oldest"),
+                "newest": row.get("newest"),
+            }
+    finally:
+        conn.close()
+
+
 def get_saved_job(user_id: int, saved_id: int) -> Optional[dict[str, Any]]:
     """One saved-job row, only if it belongs to the user."""
     conn = get_connection()

@@ -75,7 +75,7 @@ from job_matcher import (
     score_jobs,
     tailor_for_job,
 )
-from job_scraper import DEFAULT_SITES, dedupe_cross_board
+from job_scraper import DEFAULT_DEPTH, DEFAULT_SITES, DEPTH_PRESETS, dedupe_cross_board
 from job_scraper.output import build_payload
 from job_scraper.scraper import COUNTRY_INDEED
 from resume_parser import parse_resume
@@ -98,6 +98,11 @@ configure_logging()
 
 # Search-form option whitelists (anything else falls back to the default).
 WORK_TYPES = {"any", "remote", "local"}
+DEPTH_CHOICES = [
+    {"key": "quick", "label": "Quick", "blurb": "~15 postings per term, last 7 days — fastest"},
+    {"key": "standard", "label": "Standard", "blurb": "~50 postings per term, last 2 weeks"},
+    {"key": "deep", "label": "Deep", "blurb": "~100 postings per term, up to 30 days (boards cap look-back around 2 weeks)"},
+]
 COUNTRIES = {"Canada", "USA"}
 MAX_KEYWORDS = 4
 SITE_CHOICES = [
@@ -161,6 +166,15 @@ def _default_country() -> str:
     return COUNTRY_INDEED if COUNTRY_INDEED in COUNTRIES else "Canada"
 
 
+def _default_depth() -> str:
+    """The admin-configured default search depth, or the built-in default."""
+    try:
+        depth = (db.get_app_setting("search_depth_default") or "").strip().lower()
+    except Exception:
+        depth = ""
+    return depth if depth in DEPTH_PRESETS else DEFAULT_DEPTH
+
+
 def _read_job_settings(form) -> dict:
     """Pull and sanitise the job-search options from the search form.
 
@@ -186,12 +200,24 @@ def _read_job_settings(form) -> dict:
     if not sites:
         sites = list(DEFAULT_SITES)
 
+    depth = (form.get("depth") or "").strip().lower()
+    if depth not in DEPTH_PRESETS:
+        depth = _default_depth()
+
+    # Checkbox with a hidden "0" fallback: absent entirely (e.g. older forms)
+    # means "include the library", present means whatever the checkbox says.
+    use_corpus = True
+    if "use_corpus" in form:
+        use_corpus = "1" in form.getlist("use_corpus")
+
     return {
         "keywords": keywords,
         "location": location,
         "work_type": work_type,
         "country": country,
         "sites": sites,
+        "depth": depth,
+        "use_corpus": use_corpus,
     }
 
 
@@ -714,6 +740,8 @@ def profile(resume_id: int):
         site_choices=SITE_CHOICES,
         default_sites=DEFAULT_SITES,
         default_country=_default_country(),
+        depth_choices=DEPTH_CHOICES,
+        default_depth=_default_depth(),
         **_step_urls(resume_id=resume_id),
     )
 
@@ -814,6 +842,8 @@ def retry_search(search_id: int):
         "work_type": "any",
         "country": _default_country(),
         "sites": sites,
+        "depth": _default_depth(),
+        "use_corpus": True,
     }
     return _start_search(resume_id, parsed, settings)
 
@@ -1312,6 +1342,37 @@ def tracker_job_detail(saved_id: int):
         back_url=url_for("saved_jobs_page"),
         back_label="Back to your application tracker",
         info_query=f"saved_id={saved_id}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Job library — search everything the platform has already collected
+# ---------------------------------------------------------------------------
+@app.route("/library")
+@login_required
+def library():
+    """Search the internal corpus of postings accumulated by every scrape.
+
+    Runs entirely against the database — no external job-board calls — so it's
+    instant, and it can surface postings older than the boards will return.
+    """
+    q = (request.args.get("q") or "").strip()
+    loc = (request.args.get("location") or "").strip()
+    results: list[dict] = []
+    error = None
+    if q:
+        terms = [t.strip() for t in q.split(",") if t.strip()][:5]
+        try:
+            rows = db.search_corpus(terms, loc or None, max_age_days=90, limit=400)
+            results = dedupe_cross_board(rows)[:100]
+        except Exception as exc:
+            error = f"Library search failed: {exc}"
+    try:
+        stats = db.corpus_stats()
+    except Exception:
+        stats = None
+    return render_template(
+        "library.html", stats=stats, q=q, location=loc, results=results, error=error
     )
 
 

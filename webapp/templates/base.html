@@ -27,6 +27,7 @@
         {% if current_user %}
           <a href="/">New session</a>
           <a href="{{ url_for('saved_jobs_page') }}">Job application tracker</a>
+          <a href="{{ url_for('library') }}">Job library</a>
           <a href="{{ url_for('alerts_page') }}">Alerts</a>
           <a href="{{ url_for('account') }}">Account</a>
           <span class="who">{{ current_user.first_name or current_user.email }}</span>
