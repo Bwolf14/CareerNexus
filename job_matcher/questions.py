@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-MAX_QUESTIONS = 8
+MAX_QUESTIONS = 10
 MIN_QUESTIONS = 4
 
 WORK_STYLE_OPTIONS = ["Remote", "Hybrid", "On-site", "No preference"]
@@ -145,6 +145,43 @@ def _skills_question(parsed: dict[str, Any]) -> Optional[dict[str, Any]]:
     )
 
 
+def _aspiration_questions() -> list[dict[str, Any]]:
+    """Open-ended questions a resume can't answer — motivations, culture, dreams.
+
+    These give the AI matcher (and the future interviewer) the personal context
+    keyword matching can never capture: what the person actually wants next.
+    """
+    return [
+        _q(
+            "aspiration_tech",
+            "What kind of technology, tools, or ways of working excite you right now?",
+            hint="Anything you'd love to spend more time with — even if it isn't "
+            "on your resume yet.",
+            origin="aspiration",
+        ),
+        _q(
+            "aspiration_culture",
+            "What kind of company culture are you looking for?",
+            hint="Pace, team size, formality, how decisions get made, how wins "
+            "and mistakes are handled…",
+            origin="aspiration",
+        ),
+        _q(
+            "aspiration_dream",
+            "If you could do any job in your field, anywhere, what would it be — "
+            "and what draws you to it?",
+            hint="Dream big: a company, a role, a mission, a place.",
+            origin="aspiration",
+        ),
+        _q(
+            "aspiration_day",
+            "Describe a genuinely great workday. What were you doing, and with whom?",
+            hint="Helps us weigh day-to-day fit, not just job titles.",
+            origin="aspiration",
+        ),
+    ]
+
+
 def _salary_question() -> dict[str, Any]:
     return _q(
         "salary",
@@ -202,6 +239,7 @@ def build_questions(
     reads the postings to ask sharper questions.
     """
     questions = _resume_questions(parsed)
+    aspirations = _aspiration_questions()
 
     five_year = _q(
         "five_year",
@@ -211,16 +249,18 @@ def build_questions(
     )
     skills_q = _skills_question(parsed)
 
-    # Interleave: lead with the personal questions, keep the goal-setting
-    # questions in a sensible conversational order, close with priorities.
-    ordered: list[dict[str, Any]] = []
-    ordered.extend(questions[:2])
-    ordered.append(five_year)
+    # The machine-usable tail always survives the cap — the ranking depends on
+    # those ids. The open-ended head mixes resume-grounded questions with the
+    # aspirational ones (culture, dream job, great-day) a resume can't answer.
+    tail: list[dict[str, Any]] = []
     if skills_q:
-        ordered.append(skills_q)
-    ordered.extend(questions[2:])
-    ordered.append(_salary_question())
-    ordered.append(_work_style_question())
-    ordered.append(_priorities_question())
+        tail.append(skills_q)
+    tail.extend([_salary_question(), _work_style_question(), _priorities_question()])
 
-    return ordered[:max_questions]
+    head: list[dict[str, Any]] = []
+    head.extend(questions[:2])
+    head.append(five_year)
+    head.extend(aspirations)
+    head.extend(questions[2:])
+
+    return head[: max(0, max_questions - len(tail))] + tail

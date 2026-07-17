@@ -17,10 +17,12 @@ from __future__ import annotations
 from .catalog import CATALOG
 from .client import AIClientError, chat, extract_json, list_models, pull_model, test_connection
 from .features import (
+    extract_dream_keywords,
     generate_company_overview,
     generate_match_analysis,
     generate_questions,
     generate_resume_tailoring,
+    score_dream_likeness,
 )
 from .settings import (
     OPTION_SPECS,
@@ -45,6 +47,8 @@ __all__ = [
     "generate_match_analysis",
     "generate_resume_tailoring",
     "generate_company_overview",
+    "extract_dream_keywords",
+    "score_dream_likeness",
     "load_settings",
     "save_settings",
     "normalize_base_url",

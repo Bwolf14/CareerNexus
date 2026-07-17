@@ -717,6 +717,125 @@ def test_ai_config_injects_user_cloud(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Deeper questions, AI ranking, cache stability, save anchor, dream alerts
+# ---------------------------------------------------------------------------
+def test_questions_are_deeper_and_capped_at_ten():
+    from job_matcher import build_questions
+    qs = build_questions(PARSED)
+    assert len(qs) <= 10
+    ids = [q["id"] for q in qs]
+    # 3+ open-ended aspirational questions made it in…
+    assert len([q for q in qs if q["origin"] == "aspiration"]) >= 3
+    assert "aspiration_culture" in ids       # "what company culture…"
+    # …and the machine-usable tail always survives the cap.
+    for required in ("preferred_skills", "salary", "work_style", "priorities"):
+        assert required in ids
+
+
+def test_analysis_cache_key_ignores_pick_order():
+    # Same answers + model => same key, regardless of pick wobble (this was the
+    # "AI re-queries when I navigate back" bug).
+    key1 = app_module._analysis_cache_key({"a": 1}, "m")
+    key2 = app_module._analysis_cache_key({"a": 1}, "m")
+    assert key1 == key2
+    assert app_module._analysis_cache_key({"a": 2}, "m") != key1
+
+
+def test_apply_ai_ranking_reorders_by_fit():
+    picks = [
+        {"job": {"dedup_key": "a"}, "score": 80},
+        {"job": {"dedup_key": "b"}, "score": 70},
+        {"job": {"dedup_key": "c"}, "score": 60},
+    ]
+    ranked = app_module._apply_ai_ranking(picks, {
+        "per_index": {"0": "ok", "1": "great", "2": "meh"},
+        "fits": {"0": 55, "1": 92, "2": 30},
+    })
+    assert [p["ai_fit"] for p in ranked] == [92, 55, 30]
+    assert ranked[0]["job"]["dedup_key"] == "b"   # AI fit leads the order
+
+
+def test_plan_save_redirect_keeps_scroll_anchor(client):
+    resp = client.get("/recommendations/7")
+    # The save form's next target anchors back to the pick's card.
+    assert b"#pick-" in resp.data
+
+
+def test_alerts_create_extracts_dream_keywords(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(app_module.db, "create_saved_search",
+                        lambda uid, rid, label, params, freq, nxt:
+                        captured.update(params=params) or 3)
+    monkeypatch.setattr(app_module, "extract_dream_keywords",
+                        lambda cfg, text: ["network engineer", "cisco", "banking"])
+    resp = client.post("/alerts/create", data={
+        "resume_id": "3", "frequency": "daily",
+        "dream_description": "Network engineering at a big Canadian bank",
+        "likeness_threshold": "85",
+        "work_type": "any", "country": "Canada",
+    })
+    assert resp.status_code == 302
+    p = captured["params"]
+    assert p["dream_description"].startswith("Network engineering")
+    assert "network engineer" in p["keywords"]
+    assert p["likeness_threshold"] == 85
+
+
+def test_alerts_create_dream_fallback_without_ai(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(app_module.db, "create_saved_search",
+                        lambda uid, rid, label, params, freq, nxt:
+                        captured.update(params=params) or 3)
+    from ai_client import AIClientError
+    monkeypatch.setattr(app_module, "extract_dream_keywords",
+                        lambda cfg, text: (_ for _ in ()).throw(AIClientError("off")))
+    resp = client.post("/alerts/create", data={
+        "resume_id": "3", "frequency": "daily",
+        "dream_description": "Senior network engineering role at a Canadian bank",
+        "work_type": "any", "country": "Canada",
+    })
+    assert resp.status_code == 302
+    assert captured["params"]["keywords"]      # naive fallback still yields terms
+
+
+def test_alerts_likeness_threshold_update(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(app_module.db, "update_saved_search_params",
+                        lambda uid, sid, updates: captured.update(sid=sid, **updates) or True)
+    resp = client.post("/alerts/5/likeness", data={"likeness_threshold": "40"})
+    assert resp.status_code == 302
+    assert captured == {"sid": 5, "likeness_threshold": 40}
+
+
+def test_worker_likeness_gate(monkeypatch):
+    from webapp import worker
+    ss = {"id": 2, "user_id": 1,
+          "params": {"dream_description": "network engineer at a bank",
+                     "likeness_threshold": 70}}
+    fresh = [{"title": "Network Engineer", "company": "RBC"},
+             {"title": "Line Cook", "company": "Diner"}]
+    monkeypatch.setattr(worker, "score_dream_likeness",
+                        lambda cfg, dream, jobs: {0: 91, 1: 12})
+    monkeypatch.setattr(worker.db, "get_user_settings", lambda uid: {})
+    kept = worker._apply_likeness(ss, fresh)
+    assert len(kept) == 1
+    assert kept[0]["title"] == "Network Engineer"
+    assert kept[0]["likeness"] == 91
+
+
+def test_worker_likeness_falls_back_when_ai_down(monkeypatch):
+    from webapp import worker
+    from ai_client import AIClientError
+    ss = {"id": 2, "user_id": 1,
+          "params": {"dream_description": "x", "likeness_threshold": 70}}
+    fresh = [{"title": "A"}, {"title": "B"}]
+    monkeypatch.setattr(worker, "score_dream_likeness",
+                        lambda cfg, dream, jobs: (_ for _ in ()).throw(AIClientError("down")))
+    monkeypatch.setattr(worker.db, "get_user_settings", lambda uid: {})
+    assert worker._apply_likeness(ss, fresh) == fresh   # objective filters decide
+
+
+# ---------------------------------------------------------------------------
 # OCR fallback (graceful when Tesseract/pytesseract absent)
 # ---------------------------------------------------------------------------
 def test_ocr_degrades_gracefully():

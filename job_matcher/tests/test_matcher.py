@@ -193,7 +193,7 @@ def test_questions_for_sparse_resume_still_min_four():
     sparse = make_resume(experience=[], projects=[], skills={"raw": [], "categorized": {}})
     qs = build_questions(sparse)
     assert len(qs) >= MIN_QUESTIONS
-    assert all(q["origin"] == "standard" for q in qs)
+    assert all(q["origin"] in ("standard", "aspiration") for q in qs)
 
 
 # ---------------------------------------------------------------------------

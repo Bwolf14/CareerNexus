@@ -339,9 +339,9 @@ def test_generate_match_analysis_maps_indices(monkeypatch):
         return json.dumps({
             "overall": "Strong local networking market.",
             "jobs": [
-                {"n": 1, "analysis": "Great skill fit."},
-                {"n": 2, "analysis": "Pay below target."},
-                {"n": 99, "analysis": "out of range, dropped"},
+                {"n": 1, "fit": 88, "analysis": "Great skill fit."},
+                {"n": 2, "fit": 41, "analysis": "Pay below target."},
+                {"n": 99, "fit": 10, "analysis": "out of range, dropped"},
             ],
         })
 
@@ -355,5 +355,6 @@ def test_generate_match_analysis_maps_indices(monkeypatch):
     result = features.generate_match_analysis(CONFIG, RESUME, picks, {"work_style": "Remote"})
     assert result["overall"].startswith("Strong")
     assert result["per_index"] == {0: "Great skill fit.", 1: "Pay below target."}
-    assert len(captured["payload"]["shortlist"][0]["description"]) <= 400
-    assert captured["payload"]["candidate_preferences"] == {"work_style": "Remote"}
+    assert result["fits"] == {0: 88, 1: 41}
+    assert len(captured["payload"]["postings"][0]["description"]) <= 400
+    assert captured["payload"]["candidate_interview_answers"] == {"work_style": "Remote"}
