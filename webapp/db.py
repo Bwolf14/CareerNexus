@@ -1456,6 +1456,33 @@ def delete_saved_search(user_id: int, saved_search_id: int) -> bool:
         conn.close()
 
 
+def update_saved_search_params(
+    user_id: int, saved_search_id: int, updates: dict[str, Any]
+) -> bool:
+    """Merge new keys into a saved search's params JSON (owned rows only)."""
+    row = get_saved_search(saved_search_id)
+    if not row or row.get("user_id") != user_id:
+        return False
+    params = dict(row.get("params") or {})
+    params.update(updates)
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE saved_searches SET params = %s WHERE id = %s AND user_id = %s",
+                (json.dumps(params), saved_search_id, user_id),
+            )
+            changed = cur.rowcount
+        conn.commit()
+        return changed > 0
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def set_saved_search_active(user_id: int, saved_search_id: int, active: bool) -> bool:
     conn = get_connection()
     try:

@@ -17,7 +17,7 @@
       <form method="post" action="{{ url_for('saved_add') }}">
         <input type="hidden" name="search_id" value="{{ search_id }}" />
         <input type="hidden" name="dedup_key" value="{{ pick.job.dedup_key }}" />
-        <input type="hidden" name="next" value="{{ url_for('recommendations', search_id=search_id) }}" />
+        <input type="hidden" name="next" value="{{ url_for('recommendations', search_id=search_id) }}#pick-{{ pick.job.dedup_key }}" />
         <button class="btn ghost btn-mini" type="submit">☆ Save</button>
       </form>
     {% endif %}
@@ -79,11 +79,13 @@
       {% if top_picks %}
         {% for pick in top_picks %}
           {% set job = pick.job %}
-          <div class="pick {{ 'top-pick' if loop.first }}">
+          <div class="pick {{ 'top-pick' if loop.first }}" id="pick-{{ pick.job.dedup_key }}">
             <div class="pick-head">
               <span class="pick-rank {{ 'top' if loop.first }}">
                 {{ '★ #1 TOP PICK' if loop.first else '#' ~ loop.index }}</span>
-              <span class="pick-score" title="Match score">{{ pick.score }}<em>MATCH SCORE</em></span>
+              <span class="pick-score" title="Match score" data-ai-score="{{ loop.index0 }}">
+                {%- if pick.get('ai_fit') is not none -%}{{ pick.ai_fit }}<em>AI FIT</em>
+                {%- else -%}{{ pick.score }}<em>MATCH SCORE</em>{%- endif -%}</span>
             </div>
             <div class="pick-title">
               {% if job.job_url %}<a href="{{ job.job_url }}" target="_blank" rel="noopener">{{ job.title or 'Untitled posting' }}</a>
@@ -225,7 +227,8 @@
       <div class="panel-row {{ 'top-pick' if loop.first }}">
         <div class="panel-row-head">
           <span class="pick-rank {{ 'top' if loop.first }}">#{{ loop.index }}</span>
-          <span class="pick-score">{{ pick.score }}</span>
+          <span class="pick-score" {% if loop.index0 < 10 %}data-ai-score="{{ loop.index0 }}"{% endif %}>
+            {%- if pick.get('ai_fit') is not none -%}{{ pick.ai_fit }}{%- else -%}{{ pick.score }}{%- endif -%}</span>
           <span class="panel-row-title">
             {% if job.job_url %}<a href="{{ job.job_url }}" target="_blank" rel="noopener">{{ job.title or 'Untitled posting' }}</a>
             {% else %}{{ job.title or 'Untitled posting' }}{% endif %}
@@ -284,6 +287,14 @@
             el.textContent = '🤖 ' + per[i];
           });
         });
+        const fits = data.fits || {};
+        Object.keys(fits).forEach(i => {
+          document.querySelectorAll('[data-ai-score="' + i + '"]').forEach(el => {
+            const label = el.querySelector('em');
+            el.textContent = fits[i];
+            if (label !== null) { const em = document.createElement('em'); em.textContent = 'AI FIT'; el.appendChild(em); }
+          });
+        });
         if (data.overall) {
           document.getElementById('ai-overall').innerHTML =
             '<div class="card"><h2>🤖 AI career analysis</h2>' +
@@ -293,9 +304,9 @@
         if (statusBox) {
           statusBox.innerHTML =
             '<div class="banner ai"><strong>🤖 AI analysis by <code>' +
-            (data.model || 'model') + '</code>.</strong> The model added the narrative; ' +
-            'the ranking stays heuristic and transparent. ' +
-            '<a href="?regen=1">Regenerate analysis</a>.</div>';
+            (data.model || 'model') + '</code>.</strong> Personal-fit scores are in. ' +
+            '<a href="">Re-order the list by AI fit</a> (instant — the result is cached) · ' +
+            '<a href="?regen=1">Regenerate</a>.</div>';
         }
       } else if (statusBox) {
         const msg = data.error

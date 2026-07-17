@@ -390,10 +390,11 @@ def test_questions_fall_back_when_ai_fails(client, ai_client_on, monkeypatch):
 def test_recommendations_ai_runs_async_and_caches(client, ai_client_on, monkeypatch):
     calls = {"n": 0}
 
-    def fake_analysis(config, parsed, picks, answers=None):
+    def fake_analysis(config, parsed, picks, answers=None, company_notes=None):
         calls["n"] += 1
         return {"overall": "A healthy local market for network roles.",
-                "per_index": {0: "Excellent skill and pay alignment."}}
+                "per_index": {0: "Excellent skill and pay alignment."},
+                "fits": {0: 91}}
 
     monkeypatch.setattr(app_module, "generate_match_analysis", fake_analysis)
 
@@ -428,7 +429,7 @@ def test_recommendations_ai_runs_async_and_caches(client, ai_client_on, monkeypa
 def test_recommendations_survive_ai_failure(client, ai_client_on, monkeypatch):
     from ai_client import AIClientError
 
-    def boom(config, parsed, picks, answers=None):
+    def boom(config, parsed, picks, answers=None, company_notes=None):
         raise AIClientError("model not found")
 
     monkeypatch.setattr(app_module, "generate_match_analysis", boom)

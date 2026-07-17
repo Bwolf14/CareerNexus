@@ -29,6 +29,18 @@
                   {% if s.params.keywords %}{{ s.params.keywords | join(', ') }}{% endif %}
                   {% if s.params.location %}· 📍 {{ s.params.location }}{% endif %}
                 </div>
+                {% if s.params.dream_description %}
+                  <div class="jobmeta" style="margin-top:.25rem;">💭
+                    {{ s.params.dream_description[:110] }}{% if s.params.dream_description | length > 110 %}…{% endif %}</div>
+                  <form method="post" action="{{ url_for('alerts_likeness', saved_search_id=s.id) }}"
+                        style="display:flex; align-items:center; gap:.5rem; margin-top:.35rem; max-width:340px;">
+                    <input type="range" name="likeness_threshold" min="0" max="100" step="5"
+                           value="{{ s.params.likeness_threshold or 70 }}" style="flex:1;"
+                           oninput="this.parentElement.querySelector('.lk-val').textContent = this.value" />
+                    <span class="jobmeta" style="white-space:nowrap;">≥ <strong class="lk-val">{{ s.params.likeness_threshold or 70 }}</strong></span>
+                    <button class="logout-btn" type="submit">Set</button>
+                  </form>
+                {% endif %}
               </td>
               <td>{{ s.frequency }}</td>
               <td>
@@ -76,6 +88,28 @@
             <label class="field-label" for="label">Name <span class="opt">(optional)</span></label>
             <input type="text" id="label" name="label" placeholder="e.g. Calgary electrician jobs" />
           </div>
+        </div>
+
+        <div>
+          <label class="field-label" for="dream_description">Describe your dream job
+            <span class="opt">(optional, powers the AI matching)</span></label>
+          <textarea id="dream_description" name="dream_description" rows="3" maxlength="1500"
+                    placeholder="e.g. A hands-on network engineering role at a large Canadian bank in Calgary — a stable team, mentoring juniors, mostly on-site, working with Cisco gear."></textarea>
+          <div class="field-hint" style="color:var(--faint); font-size:.78rem; margin-top:.3rem;">
+            The AI pulls smart search keywords out of this, and every new posting is scored
+            0–100 for how close it is to this description — only postings above your
+            likeness threshold trigger the alert.</div>
+        </div>
+
+        <div>
+          <label class="field-label" for="likeness_threshold">Likeness threshold:
+            <strong><span id="likeness-value">70</span></strong> / 100</label>
+          <input type="range" id="likeness_threshold" name="likeness_threshold"
+                 min="0" max="100" step="5" value="70" style="width:100%; max-width:420px;"
+                 oninput="document.getElementById('likeness-value').textContent = this.value" />
+          <div class="field-hint" style="color:var(--faint); font-size:.78rem; margin-top:.3rem;">
+            How close a posting must be to your dream job before you're alerted.
+            Higher = fewer, more precise alerts. Only applies when a dream job is described.</div>
         </div>
 
         <div class="row2">

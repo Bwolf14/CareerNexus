@@ -59,6 +59,7 @@ from flask import (
 
 from ai_client import (
     AIClientError,
+    extract_dream_keywords,
     generate_company_overview,
     generate_match_analysis,
     generate_questions,
@@ -1026,21 +1027,64 @@ def _plan_picks(parsed: dict, jobs: list, answers: dict | None) -> list[dict]:
     return score_jobs(parsed, jobs, answers or {}, top_n=len(jobs) or 1)
 
 
-def _analysis_cache_key(picks: list[dict], answers: dict | None, model: str | None) -> str:
+def _analysis_cache_key(answers: dict | None, model: str | None) -> str:
+    """Cache key for a search's AI analysis: answers + model ONLY.
+
+    The pick list is deliberately excluded — a search's postings are fixed, but
+    derived pick ordering could wobble (e.g. freshness rolling over a day) and
+    every wobble used to bust the cache, re-querying the model whenever the
+    user navigated back to the results page.
+    """
     basis = json.dumps(
-        {
-            "answers": answers or {},
-            "picks": [
-                [(p.get("job") or {}).get("source_site"),
-                 (p.get("job") or {}).get("external_id")]
-                for p in picks
-            ],
-            "model": model,
-        },
-        sort_keys=True,
-        default=str,
+        {"answers": answers or {}, "model": model}, sort_keys=True, default=str
     )
     return hashlib.sha1(basis.encode("utf-8")).hexdigest()
+
+
+def _company_notes_for(picks: list[dict]) -> dict[int, str]:
+    """Cached company-background snippets per pick index (no network calls).
+
+    Only companies the user has already viewed (or that another lookup cached)
+    contribute — this must stay instant, so we never fetch live here.
+    """
+    notes: dict[int, str] = {}
+    for i, pick in enumerate(picks):
+        company = ((pick.get("job") or {}).get("company") or "").strip()
+        if not company:
+            continue
+        try:
+            profile = company_info.cached_company(company).get("profile")
+        except Exception:
+            continue
+        if not profile:
+            continue
+        bits = [profile.get("description") or "", (profile.get("extract") or "")[:400]]
+        facts = profile.get("facts") or {}
+        if facts:
+            bits.append("Facts: " + json.dumps(facts, ensure_ascii=False))
+        text = " — ".join(b for b in bits if b)
+        if text:
+            notes[i] = text[:700]
+    return notes
+
+
+def _apply_ai_ranking(picks: list[dict], analysis: dict) -> list[dict]:
+    """Attach AI analyses/fit scores to picks and re-rank by personal fit.
+
+    Picks the model scored sort by fit (descending); unscored ones keep their
+    heuristic order below. The heuristic score stays on each pick for
+    transparency.
+    """
+    per_index = analysis.get("per_index") or {}
+    fits = analysis.get("fits") or {}
+    for i, pick in enumerate(picks):
+        pick["ai_analysis"] = per_index.get(str(i))
+        fit = fits.get(str(i))
+        pick["ai_fit"] = int(fit) if fit is not None else None
+    scored = [p for p in picks if p.get("ai_fit") is not None]
+    rest = [p for p in picks if p.get("ai_fit") is None]
+    scored.sort(key=lambda p: p["ai_fit"], reverse=True)
+    return scored + rest
 
 
 def _load_cached_analysis(search_id: int, cache_key: str) -> dict | None:
@@ -1063,27 +1107,33 @@ def _run_analysis(
     ai_settings = _ai_config()
     model = configured_model(ai_settings)
     base = {"ready": True, "used": False, "safe_mode": True,
-            "overall": None, "per_index": {}, "model": model, "error": None}
+            "overall": None, "per_index": {}, "fits": {}, "model": model,
+            "error": None}
     if not is_configured(ai_settings) or not picks:
         return base
 
-    cache_key = _analysis_cache_key(picks, answers, model)
+    cache_key = _analysis_cache_key(answers, model)
     if not regen:
         cached = _load_cached_analysis(search_id, cache_key)
         if cached:
             return {"ready": True, "used": True, "safe_mode": False,
                     "overall": cached.get("overall"),
                     "per_index": cached.get("per_index") or {},
+                    "fits": cached.get("fits") or {},
                     "model": cached.get("model") or model, "error": None}
 
     try:
-        result = generate_match_analysis(ai_settings, parsed, picks, answers)
+        result = generate_match_analysis(
+            ai_settings, parsed, picks, answers,
+            company_notes=_company_notes_for(picks),
+        )
     except AIClientError as exc:
         return {**base, "error": str(exc)}
 
     analysis = {
         "key": cache_key, "model": model, "overall": result["overall"],
         "per_index": {str(i): text for i, text in result["per_index"].items()},
+        "fits": {str(i): fit for i, fit in (result.get("fits") or {}).items()},
     }
     try:
         ai_store.save("analysis", search_id, analysis)
@@ -1091,7 +1141,7 @@ def _run_analysis(
         pass
     return {"ready": True, "used": True, "safe_mode": False,
             "overall": analysis["overall"], "per_index": analysis["per_index"],
-            "model": model, "error": None}
+            "fits": analysis["fits"], "model": model, "error": None}
 
 
 @app.route("/recommendations/<int:search_id>")
@@ -1122,13 +1172,14 @@ def recommendations(search_id: int):
     ai_pending = False
     if ai_configured and ai_picks:
         cached = None if regen else _load_cached_analysis(
-            search_id, _analysis_cache_key(ai_picks, answers, model)
+            search_id, _analysis_cache_key(answers, model)
         )
         if cached:
             overall_analysis = cached.get("overall")
-            per_index = cached.get("per_index") or {}
-            for i, pick in enumerate(ai_picks):
-                pick["ai_analysis"] = per_index.get(str(i))
+            # Attach analyses + AI fit scores to the top picks, then re-rank
+            # the whole list so the model's personal-fit ordering leads.
+            ranked_top = _apply_ai_ranking(ai_picks, cached)
+            picks = ranked_top + picks[AI_ANALYSIS_TOP_N:]
             ai_status["used"] = True
             ai_status["model"] = cached.get("model") or model
         else:
@@ -1469,6 +1520,32 @@ def alerts_create():
     _require_owned_resume(resume_id)
 
     params = _read_job_settings(request.form)
+
+    # Dream-job description → AI-extracted search keywords + likeness scoring.
+    dream = (request.form.get("dream_description") or "").strip()[:1500]
+    if dream:
+        params["dream_description"] = dream
+        try:
+            dream_keywords = extract_dream_keywords(_ai_config(), dream)
+        except Exception:
+            # No model reachable: naive fallback so creation never blocks —
+            # longest distinctive words stand in for real keyword extraction.
+            words = [w.strip(".,!?()").lower() for w in dream.split()]
+            seen: list[str] = []
+            for w in sorted(set(words), key=len, reverse=True):
+                if len(w) > 4 and w not in seen:
+                    seen.append(w)
+            dream_keywords = seen[:4]
+        merged = [k for k in dream_keywords if k.lower()
+                  not in [x.lower() for x in params["keywords"]]]
+        params["keywords"] = (merged + params["keywords"])[:6]
+        params["dream_keywords"] = dream_keywords
+    try:
+        threshold = int(request.form.get("likeness_threshold") or 70)
+    except ValueError:
+        threshold = 70
+    params["likeness_threshold"] = max(0, min(100, threshold))
+
     # Specific alert criteria: only postings matching these fire the alert
     # (e.g. company "Google" + title contains "engineer"). The company is also
     # added as a search keyword so the scrape actually looks for it.
@@ -1497,6 +1574,23 @@ def alerts_create():
         flash("Alert saved — it'll run on the schedule and email you new matches.", "info")
     except Exception as exc:
         flash(f"Could not save that alert: {exc}", "error")
+    return redirect(url_for("alerts_page"))
+
+
+@app.route("/alerts/<int:saved_search_id>/likeness", methods=["POST"])
+@login_required
+def alerts_likeness(saved_search_id: int):
+    """Adjust an alert's AI likeness threshold (the 0-100 bar)."""
+    try:
+        threshold = max(0, min(100, int(request.form.get("likeness_threshold") or 70)))
+    except ValueError:
+        threshold = 70
+    ok = db.update_saved_search_params(
+        current_user()["id"], saved_search_id, {"likeness_threshold": threshold}
+    )
+    if not ok:
+        abort(404, description="No alert of yours with that id.")
+    flash(f"Likeness threshold set to {threshold}.", "info")
     return redirect(url_for("alerts_page"))
 
 

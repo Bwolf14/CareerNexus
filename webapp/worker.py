@@ -26,6 +26,7 @@ import os
 import time
 from datetime import datetime, timedelta
 
+from ai_client import AIClientError, load_settings, score_dream_likeness
 from job_scraper import dedupe_cross_board
 
 from . import configure_logging, db, email_utils, notifications, search_service
@@ -102,6 +103,50 @@ def scheduler_tick(now: datetime) -> int:
     return enqueued
 
 
+def _ai_config_for_user(user_id: int) -> dict:
+    """Backend AI slots, plus the user's own cloud key when they enabled it."""
+    config = load_settings()
+    try:
+        us = db.get_user_settings(user_id)
+    except Exception:
+        us = {}
+    if us.get("ai_cloud_enabled") and us.get("ai_api_key") and us.get("ai_model"):
+        config = {**config, "cloud": {
+            "enabled": True, "provider": us.get("ai_provider") or "openai",
+            "api_key": us.get("ai_api_key"), "model": us.get("ai_model"),
+        }}
+    return config
+
+
+def _apply_likeness(ss: dict, fresh: list[dict]) -> list[dict]:
+    """AI dream-job likeness gate: keep postings scoring >= the alert's bar.
+
+    When no model is reachable the objective filters alone decide (logged) —
+    an offline model must never silently swallow alerts.
+    """
+    params = ss.get("params") or {}
+    dream = (params.get("dream_description") or "").strip()
+    if not dream or not fresh:
+        return fresh
+    threshold = int(params.get("likeness_threshold") or 70)
+    try:
+        scores = score_dream_likeness(_ai_config_for_user(ss["user_id"]), dream, fresh)
+    except AIClientError as exc:
+        log.warning("saved_search %s: likeness scoring unavailable (%s) — "
+                    "keeping objective-filter results", ss.get("id"), exc)
+        return fresh
+    kept = []
+    for i, job in enumerate(fresh):
+        score = scores.get(i)
+        if score is None or score >= threshold:
+            job = dict(job)
+            job["likeness"] = score
+            kept.append(job)
+    log.info("saved_search %s: %s/%s postings passed likeness >= %s",
+             ss.get("id"), len(kept), len(fresh), threshold)
+    return kept
+
+
 def _matches_criteria(job: dict, params: dict) -> bool:
     """Apply the alert's specific criteria (company / title-contains) to one job.
 
@@ -136,6 +181,7 @@ def _handle_alert(saved_search_id: int, new_search_id: int) -> None:
             j for j in new_jobs
             if j.get("dedup_key") not in old_keys and _matches_criteria(j, params)
         ]
+        fresh = _apply_likeness(ss, fresh)
         if fresh:
             _send_alert(ss, new_search_id, fresh)
         else:
@@ -159,6 +205,8 @@ def _send_alert(ss: dict, search_id: int, fresh: list) -> None:
         bits = " · ".join(
             b for b in [j.get("title"), j.get("company"), j.get("location")] if b
         )
+        if j.get("likeness") is not None:
+            bits += f" · {j['likeness']}% match to your dream job"
         lines.append(f"• {bits}")
         if j.get("job_url"):
             lines.append(f"  {j['job_url']}")
