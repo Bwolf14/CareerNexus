@@ -100,7 +100,11 @@ OPTION_SPECS: list[dict[str, Any]] = [
         "min": 64, "max": 8192, "unit": "tokens",
         "desc": "Hard cap on how many tokens the model generates in one reply.",
         "recommend": "Keep ON (~1024). Caps runaway generations so a stuck model "
-                     "can't hang a request. Raise it only if analyses get cut off.",
+                     "can't hang a request. The career-plan analysis step "
+                     "automatically raises this cap when a batch of postings "
+                     "needs more room to reply in full, so this value only "
+                     "matters as a floor/safety net, not a hard ceiling on "
+                     "that feature.",
     },
     {
         "key": "num_ctx", "label": "Context window", "kind": "value",

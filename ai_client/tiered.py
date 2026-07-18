@@ -136,16 +136,29 @@ def active_status(config: dict[str, Any]) -> dict[str, Any]:
     return {"available": True, "slot": active["name"], "model": active["model"]}
 
 
-def run_chat(config: dict[str, Any], messages: list[dict[str, str]]) -> str:
+def run_chat(
+    config: dict[str, Any],
+    messages: list[dict[str, str]],
+    *,
+    min_predict: Optional[int] = None,
+) -> str:
     """Route one chat: the user's cloud key (if enabled) wins, else the first
     reachable backend slot. Raise if nothing is usable.
+
+    ``min_predict`` is a floor on the reply's token budget for callers that
+    know the answer must contain a certain amount of content (e.g. one
+    analysis paragraph per posting) — it overrides an admin-configured
+    "max response tokens" that's too low to be *technically capable* of
+    finishing the reply, rather than silently truncating valid JSON mid-field
+    and failing. It never lowers a higher admin-configured cap, and a cap the
+    admin explicitly turned off (no limit) is left off.
 
     Callers treat :class:`AIClientError` as "fall back to the deterministic
     (safe-mode) behaviour".
     """
     cloud = (config or {}).get("cloud") or {}
     if cloud_is_configured(cloud):
-        return chat_cloud(cloud, messages)
+        return chat_cloud(cloud, messages, min_tokens=min_predict)
 
     active = resolve_slot(config, probe=True)
     if active is None:
@@ -153,6 +166,8 @@ def run_chat(config: dict[str, Any], messages: list[dict[str, str]]) -> str:
             "No AI model is available (none enabled/reachable) — running in safe mode."
         )
     think, keep_alive, options = build_options(active["options"])
+    if min_predict and options.get("num_predict") is not None:
+        options["num_predict"] = max(int(options["num_predict"]), min_predict)
     connect_timeout, read_timeout = slot_timeouts(active["options"], config)
     return client.chat(
         active["base"],

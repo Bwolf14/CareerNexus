@@ -381,6 +381,15 @@ before anything is sent to the model for narrative analysis. The full ranked
 list still shows in the slide-out panel; only that top slice gets the AI's
 2–3 sentence per-posting writeup and personal fit score.
 
+Writing that many per-posting analyses takes real reply length — a 50-posting
+batch needs on the order of 4,000+ output tokens. Since the admin's "max
+response tokens" option (`num_predict`) defaults to 1024 (sized for a much
+smaller batch), this step computes its own token-budget floor from the batch
+size and raises the request's cap only as far as needed — it never lowers a
+higher admin-configured cap, and an admin who explicitly disabled the cap
+stays uncapped. Without this, a wide batch would get silently truncated
+mid-JSON and fail instead of just taking longer.
+
 > **CPU-only note:** the default deployment has no GPU, so the local catalog
 > favours small models (0.5B–3B). 7B+ models run but are slow on CPU — the
 > catalog says so per model.

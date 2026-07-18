@@ -185,6 +185,56 @@ def test_run_chat_uses_resolved_slot(monkeypatch):
     assert seen["kw"]["think"] is False  # default thinking off
 
 
+def test_run_chat_min_predict_raises_a_too_low_admin_cap(monkeypatch):
+    cfg = _cfg(primary={"enabled": True, "base_url": "http://p:1", "model": "m1"})
+    monkeypatch.setattr(
+        tiered, "resolve_slot",
+        lambda config, probe=True: {
+            "name": "primary", "slot": {}, "base": "http://p:1", "model": "m1",
+            "options": {"num_predict": {"on": True, "value": 1024}},
+        },
+    )
+    seen = {}
+    monkeypatch.setattr(tiered.client, "chat",
+                        lambda base, model, messages, **kw: seen.update(kw=kw) or "ok")
+    tiered.run_chat(cfg, [{"role": "user", "content": "hi"}], min_predict=4750)
+    assert seen["kw"]["options"]["num_predict"] == 4750
+
+
+def test_run_chat_min_predict_never_lowers_a_higher_admin_cap(monkeypatch):
+    cfg = _cfg(primary={"enabled": True, "base_url": "http://p:1", "model": "m1"})
+    monkeypatch.setattr(
+        tiered, "resolve_slot",
+        lambda config, probe=True: {
+            "name": "primary", "slot": {}, "base": "http://p:1", "model": "m1",
+            "options": {"num_predict": {"on": True, "value": 8000}},
+        },
+    )
+    seen = {}
+    monkeypatch.setattr(tiered.client, "chat",
+                        lambda base, model, messages, **kw: seen.update(kw=kw) or "ok")
+    tiered.run_chat(cfg, [{"role": "user", "content": "hi"}], min_predict=4750)
+    assert seen["kw"]["options"]["num_predict"] == 8000
+
+
+def test_run_chat_min_predict_is_a_noop_when_admin_left_it_off(monkeypatch):
+    # The admin explicitly disabled the cap (rely on the model's own default)
+    # — min_predict must not re-introduce one.
+    cfg = _cfg(primary={"enabled": True, "base_url": "http://p:1", "model": "m1"})
+    monkeypatch.setattr(
+        tiered, "resolve_slot",
+        lambda config, probe=True: {
+            "name": "primary", "slot": {}, "base": "http://p:1", "model": "m1",
+            "options": {},
+        },
+    )
+    seen = {}
+    monkeypatch.setattr(tiered.client, "chat",
+                        lambda base, model, messages, **kw: seen.update(kw=kw) or "ok")
+    tiered.run_chat(cfg, [{"role": "user", "content": "hi"}], min_predict=4750)
+    assert "num_predict" not in seen["kw"]["options"]
+
+
 # ---------------------------------------------------------------------------
 # Cloud (BYO key) routing + per-model timeouts
 # ---------------------------------------------------------------------------
@@ -195,7 +245,7 @@ def test_run_chat_routes_to_cloud_when_enabled(monkeypatch):
                     "api_key": "sk-x", "model": "gpt-4o-mini"}
     seen = {}
     monkeypatch.setattr(tiered, "chat_cloud",
-                        lambda cloud, messages: seen.update(model=cloud["model"]) or "cloud says hi")
+                        lambda cloud, messages, **kw: seen.update(model=cloud["model"]) or "cloud says hi")
     out = tiered.run_chat(cfg, [{"role": "user", "content": "hi"}])
     assert out == "cloud says hi"
     assert seen["model"] == "gpt-4o-mini"
@@ -292,6 +342,62 @@ def test_cloud_timeout_raises_clear_ai_error(monkeypatch):
              "timeout_seconds": 5},
             [{"role": "user", "content": "hi"}],
         )
+
+
+def test_cloud_anthropic_max_tokens_raised_for_a_big_batch(monkeypatch):
+    from ai_client import cloud
+    captured = {}
+
+    class FakeResp:
+        status_code = 200
+        ok = True
+        def json(self):
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+    monkeypatch.setattr(cloud.requests, "post",
+                        lambda url, json=None, timeout=None, headers=None:
+                        captured.update(body=json) or FakeResp())
+    cloud.chat_cloud(
+        {"enabled": True, "provider": "anthropic", "api_key": "sk-ant", "model": "m"},
+        [{"role": "user", "content": "hi"}],
+        min_tokens=4750,
+    )
+    assert captured["body"]["max_tokens"] == 4750
+
+    # A batch small enough to fit the provider default doesn't shrink it.
+    cloud.chat_cloud(
+        {"enabled": True, "provider": "anthropic", "api_key": "sk-ant", "model": "m"},
+        [{"role": "user", "content": "hi"}],
+        min_tokens=100,
+    )
+    assert captured["body"]["max_tokens"] == cloud._ANTHROPIC_DEFAULT_MAX_TOKENS
+
+
+def test_cloud_openai_max_tokens_only_set_when_min_tokens_given(monkeypatch):
+    from ai_client import cloud
+    captured = {}
+
+    class FakeResp:
+        status_code = 200
+        ok = True
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setattr(cloud.requests, "post",
+                        lambda url, json=None, timeout=None, headers=None:
+                        captured.update(body=json) or FakeResp())
+    cloud.chat_cloud(
+        {"enabled": True, "provider": "openai", "api_key": "sk-x", "model": "m"},
+        [{"role": "user", "content": "hi"}],
+    )
+    assert "max_tokens" not in captured["body"]
+
+    cloud.chat_cloud(
+        {"enabled": True, "provider": "openai", "api_key": "sk-x", "model": "m"},
+        [{"role": "user", "content": "hi"}],
+        min_tokens=4750,
+    )
+    assert captured["body"]["max_tokens"] == 4750
 
 
 def test_cloud_anthropic_payload(monkeypatch):
@@ -441,3 +547,26 @@ def test_generate_match_analysis_maps_indices(monkeypatch):
     assert result["fits"] == {0: 88, 1: 41}
     assert len(captured["payload"]["postings"][0]["description"]) <= 400
     assert captured["payload"]["candidate_interview_answers"] == {"work_style": "Remote"}
+
+
+def test_generate_match_analysis_scales_min_predict_to_batch_size(monkeypatch):
+    """A 50-posting batch needs a much larger reply-token floor than a
+    2-posting one, so an admin's fixed 'max response tokens' cap sized for a
+    small batch doesn't truncate a big one's JSON mid-field."""
+    captured = {}
+
+    def fake_run_chat(config, messages, min_predict=None, **kw):
+        captured["min_predict"] = min_predict
+        return json.dumps({"overall": "ok", "jobs": [{"n": 1, "fit": 80, "analysis": "x"}]})
+
+    monkeypatch.setattr(features, "run_chat", fake_run_chat)
+    small = [{"job": {"title": "A"}, "reasons": [], "matched_skills": [], "score": 1}]
+    features.generate_match_analysis(CONFIG, RESUME, small, {})
+    small_floor = captured["min_predict"]
+
+    big = small * 50
+    features.generate_match_analysis(CONFIG, RESUME, big, {})
+    big_floor = captured["min_predict"]
+
+    assert big_floor > small_floor
+    assert big_floor >= 90 * 50  # generous per-posting allowance, at minimum
