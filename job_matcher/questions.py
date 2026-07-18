@@ -12,7 +12,7 @@ Every question is a plain dict the web layer can render as a form field::
     {
       "id":      str,              # stable key the answers are stored under
       "prompt":  str,              # the question text
-      "type":    "textarea" | "text" | "choice" | "multichoice" | "salary",
+      "type":    "textarea" | "text" | "choice" | "multichoice" | "salary" | "experience",
       "options": [str, ...],       # for choice/multichoice
       "hint":    str | None,       # small helper text under the field
       "origin":  "resume" | "standard",
@@ -26,6 +26,8 @@ session so the future AI step can use them.
 from __future__ import annotations
 
 from typing import Any, Optional
+
+from .experience import estimate_experience_years
 
 MAX_QUESTIONS = 10
 MIN_QUESTIONS = 4
@@ -182,6 +184,37 @@ def _aspiration_questions() -> list[dict[str, Any]]:
     ]
 
 
+def _experience_question(parsed: dict[str, Any]) -> dict[str, Any]:
+    """Years-of-experience slider, pre-filled from the resume's date ranges.
+
+    The value doubles as a target seniority: 0 ≈ entry level, 40+ ≈ senior
+    leadership. Scoring uses it to avoid ranking roles that demand far more
+    (or far less) experience than the user has at the top.
+    """
+    est = estimate_experience_years(parsed)
+    if est is not None:
+        hint = (
+            f"We estimated {est} year{'' if est == 1 else 's'} from your resume — "
+            "slide or type to correct it. This sets the level of role we rank "
+            "first, from entry level (0) to senior leadership (40+)."
+        )
+    else:
+        hint = (
+            "From entry level (0) to senior leadership (40+). Roles asking for "
+            "much more experience than this won't be ranked first."
+        )
+    q = _q(
+        "experience_years",
+        "How many years of experience do you have in this field — and what "
+        "level of role are you aiming for?",
+        "experience",
+        hint=hint,
+        origin="resume" if est is not None else "standard",
+    )
+    q["default"] = est
+    return q
+
+
 def _salary_question() -> dict[str, Any]:
     return _q(
         "salary",
@@ -219,7 +252,7 @@ def structured_questions(parsed: dict[str, Any]) -> list[dict[str, Any]]:
     appended to the questionnaire even when an AI generates the open-ended
     part of the interview.
     """
-    out: list[dict[str, Any]] = []
+    out: list[dict[str, Any]] = [_experience_question(parsed)]
     skills_q = _skills_question(parsed)
     if skills_q:
         out.append(skills_q)
@@ -247,15 +280,11 @@ def build_questions(
         hint="A rough direction is fine — deepen your craft, lead a team, "
         "switch specialties, start something of your own…",
     )
-    skills_q = _skills_question(parsed)
-
     # The machine-usable tail always survives the cap — the ranking depends on
-    # those ids. The open-ended head mixes resume-grounded questions with the
-    # aspirational ones (culture, dream job, great-day) a resume can't answer.
-    tail: list[dict[str, Any]] = []
-    if skills_q:
-        tail.append(skills_q)
-    tail.extend([_salary_question(), _work_style_question(), _priorities_question()])
+    # those ids (experience, skills, salary, work style, priorities). The
+    # open-ended head mixes resume-grounded questions with the aspirational
+    # ones (culture, dream job, great-day) a resume can't answer.
+    tail = structured_questions(parsed)
 
     head: list[dict[str, Any]] = []
     head.extend(questions[:2])

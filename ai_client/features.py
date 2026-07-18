@@ -52,7 +52,11 @@ _ANALYSIS_SYSTEM = (
     "well each job AND its company fit this specific person — growth toward "
     "their stated dream and 5-10-year direction, the culture they described "
     "versus what the posting/company info suggests, the skills they enjoy, "
-    "pay and work-style fit, and any honest concerns. For each posting give a "
+    "pay and work-style fit, and any honest concerns. Weigh seniority "
+    "realistically: if the answers state their years of experience "
+    "(experience_years), postings demanding far more experience are a stretch "
+    "and should score lower, and clearly entry-level roles are a poor fit for "
+    "a very experienced candidate. For each posting give a "
     "fit score from 0-100 (be discriminating — use the full range; reserve "
     "85+ for genuinely excellent personal fits) and a 2-3 sentence analysis "
     "that references THEIR answers where relevant. Also write a short overall "
@@ -163,8 +167,10 @@ def generate_questions(
     if not questions:
         raise AIClientError("The model returned no usable questions.")
 
-    questions.extend(structured_questions(parsed))
-    return questions[:MAX_QUESTIONS]
+    # The structured tail (experience, skills, pay, work style, priorities)
+    # always survives the cap — the ranking depends on those ids.
+    tail = structured_questions(parsed)
+    return questions[: max(0, MAX_QUESTIONS - len(tail))] + tail
 
 
 _COMPANY_SYSTEM = (
