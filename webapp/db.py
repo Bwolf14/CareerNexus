@@ -1716,6 +1716,7 @@ def get_user_email(user_id: int) -> Optional[str]:
 _USER_SETTINGS_FIELDS = {
     "phone_number", "discord_webhook",
     "ai_cloud_enabled", "ai_provider", "ai_api_key", "ai_model",
+    "ai_timeout_seconds",
 }
 
 

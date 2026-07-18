@@ -716,6 +716,58 @@ def test_ai_config_injects_user_cloud(client, monkeypatch):
     assert is_configured(cfg) is True               # AI offered w/o backend slots
 
 
+def test_account_ai_blank_timeout_means_no_timeout(client, monkeypatch):
+    saved = {}
+    monkeypatch.setattr(app_module.db, "upsert_user_settings",
+                        lambda uid, **f: saved.update(f))
+    resp = client.post("/account/ai", data={
+        "ai_cloud_enabled": "1", "ai_acknowledge": "1", "ai_provider": "openai",
+        "ai_api_key": "sk-x", "ai_model": "gpt-4o-mini", "ai_timeout_seconds": "",
+    })
+    assert resp.status_code == 302
+    assert saved["ai_timeout_seconds"] is None
+
+
+def test_account_ai_saves_and_clamps_timeout(client, monkeypatch):
+    saved = {}
+    monkeypatch.setattr(app_module.db, "upsert_user_settings",
+                        lambda uid, **f: saved.update(f))
+    client.post("/account/ai", data={
+        "ai_cloud_enabled": "1", "ai_acknowledge": "1", "ai_provider": "openai",
+        "ai_api_key": "sk-x", "ai_model": "gpt-4o-mini", "ai_timeout_seconds": "90",
+    })
+    assert saved["ai_timeout_seconds"] == 90
+
+    client.post("/account/ai", data={
+        "ai_cloud_enabled": "1", "ai_acknowledge": "1", "ai_provider": "openai",
+        "ai_api_key": "sk-x", "ai_model": "gpt-4o-mini", "ai_timeout_seconds": "999999",
+    })
+    assert saved["ai_timeout_seconds"] == 3600  # clamped to the max
+
+
+def test_account_ai_rejects_junk_timeout(client, monkeypatch):
+    monkeypatch.setattr(app_module.db, "upsert_user_settings",
+                        lambda uid, **f: pytest.fail("should not save"))
+    resp = client.post("/account/ai", data={
+        "ai_cloud_enabled": "1", "ai_acknowledge": "1", "ai_provider": "openai",
+        "ai_api_key": "sk-x", "ai_model": "gpt-4o-mini", "ai_timeout_seconds": "not-a-number",
+    }, follow_redirects=True)
+    assert b"must be a number" in resp.data
+
+
+def test_ai_config_forwards_user_timeout_seconds(client, monkeypatch):
+    monkeypatch.setattr(app_module.db, "get_user_settings", lambda uid: {
+        "ai_cloud_enabled": 1, "ai_provider": "openai",
+        "ai_api_key": "sk-x", "ai_model": "gpt-4o-mini",
+        "ai_timeout_seconds": 45,
+    })
+    with app.test_request_context("/"):
+        from flask import session
+        session["user_id"] = 1
+        cfg = app_module._ai_config()
+    assert cfg["cloud"]["timeout_seconds"] == 45
+
+
 # ---------------------------------------------------------------------------
 # Deeper questions, AI ranking, cache stability, save anchor, dream alerts
 # ---------------------------------------------------------------------------

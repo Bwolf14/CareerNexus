@@ -675,3 +675,32 @@ def test_collect_answers_parses_experience_value():
         {"experience_years": 60}
     assert app_module._collect_answers(qs, MultiDict({"experience_years": "abc"})) == {}
     assert app_module._collect_answers(qs, MultiDict({})) == {}
+
+
+# ---------------------------------------------------------------------------
+# AI narrative-analysis slice size (env-tunable, default widened to ~50)
+# ---------------------------------------------------------------------------
+def test_ai_analysis_top_n_defaults_to_50():
+    # Loaded once at import time from AI_ANALYSIS_TOP_N (unset in the test env).
+    assert app_module.AI_ANALYSIS_TOP_N == 50
+
+
+def test_recommendations_sends_up_to_top_n_picks_to_ai(client, ai_client_on, monkeypatch):
+    # Heuristic scoring ranks every stored posting (however many the job
+    # library blended in); only the top AI_ANALYSIS_TOP_N get full AI
+    # narrative analysis — never the full corpus.
+    many_jobs = [dict(JOBS[0], external_id=f"j{i}", title=f"Network Tech {i}")
+                 for i in range(120)]
+    monkeypatch.setattr(app_module.db, "get_jobs_for_search",
+                        lambda sid: many_jobs if sid == 7 else [])
+    seen = {}
+
+    def fake_analysis(config, parsed, picks, answers=None, company_notes=None):
+        seen["n_picks"] = len(picks)
+        return {"overall": "ok", "per_index": {}, "fits": {}}
+
+    monkeypatch.setattr(app_module, "generate_match_analysis", fake_analysis)
+    client.get("/recommendations/7")
+    resp = client.get("/recommendations/7/ai")
+    assert resp.status_code == 200
+    assert seen["n_picks"] == app_module.AI_ANALYSIS_TOP_N == 50

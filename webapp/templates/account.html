@@ -64,7 +64,12 @@
     {% if settings.get('ai_cloud_enabled') %}
       <div class="banner warn" style="margin-top:.8rem;"><strong>Currently ON</strong> —
         your AI requests go to {{ settings.get('ai_provider') or 'openai' }}
-        (<code>{{ settings.get('ai_model') }}</code>) instead of the locally hosted models.</div>
+        (<code>{{ settings.get('ai_model') }}</code>) instead of the locally hosted models.
+        {% if settings.get('ai_timeout_seconds') %}
+          Requests give up after {{ settings.get('ai_timeout_seconds') }}s.
+        {% else %}
+          Requests have no timeout — a slow response just takes as long as it takes.
+        {% endif %}</div>
     {% endif %}
     <form method="post" action="{{ url_for('account_ai') }}" style="margin-top:1rem;">
       <div class="formgrid" style="max-width:520px;">
@@ -88,6 +93,18 @@
           <input type="password" id="ai_api_key" name="ai_api_key"
                  value="{{ settings.get('ai_api_key') or '' }}" autocomplete="off" />
           <div class="hint">Stored on this server so it can call the provider for you.</div>
+        </div>
+        <div>
+          <label class="field-label" for="ai_timeout_seconds">Response timeout
+            <span class="opt">(seconds, optional)</span></label>
+          <input type="number" id="ai_timeout_seconds" name="ai_timeout_seconds" min="5" max="3600"
+                 value="{{ settings.get('ai_timeout_seconds') or '' }}" placeholder="e.g. 60" />
+          <div class="banner warn" style="margin-top:.4rem; font-size:.85rem;">
+            <strong>Leave this blank for no timeout at all.</strong> A request will then wait
+            as long as the provider takes to answer — if a prompt takes an hour, it takes an
+            hour; the page won't fail it early. Set a number of seconds only if you'd rather a
+            slow response fail outright than keep waiting.
+          </div>
         </div>
         <div class="checks" style="flex-direction:column; align-items:flex-start; gap:.5rem;">
           <label><input type="checkbox" name="ai_acknowledge" value="1" />
