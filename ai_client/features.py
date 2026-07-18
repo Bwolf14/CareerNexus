@@ -311,12 +311,21 @@ def generate_match_analysis(
             for i, pick in enumerate(picks)
         ],
     }
+    # A reply needs roughly one short paragraph + a fit score per posting, so
+    # the token budget must scale with how many postings are in this batch —
+    # an admin's fixed "max response tokens" cap (e.g. the recommended 1024)
+    # sized for a handful of postings would otherwise truncate the JSON mid-
+    # field for a bigger batch and fail the whole analysis. 90 tokens/posting
+    # is a generous per-entry estimate; +250 covers the overall summary and
+    # JSON structure.
+    min_predict = 250 + 90 * len(picks)
     reply = run_chat(
         settings,
         [
             {"role": "system", "content": _ANALYSIS_SYSTEM},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ],
+        min_predict=min_predict,
     )
     data = extract_json(reply, dict)
 

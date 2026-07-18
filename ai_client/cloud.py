@@ -47,7 +47,10 @@ def _split_system(messages: list[dict[str, str]]) -> tuple[str, list[dict[str, s
 
 
 def _chat_openai(
-    cloud: dict[str, Any], messages: list[dict[str, str]], read_timeout: Optional[float]
+    cloud: dict[str, Any],
+    messages: list[dict[str, str]],
+    read_timeout: Optional[float],
+    min_tokens: Optional[int] = None,
 ) -> str:
     system_text, rest = _split_system(messages)
     body = {
@@ -57,6 +60,10 @@ def _chat_openai(
               + ("\n\n" + system_text if system_text else "")}] + rest
         ),
     }
+    # OpenAI defaults max_tokens to the model's own output limit when omitted
+    # (already generous), so only set it when a caller needs a guaranteed floor.
+    if min_tokens:
+        body["max_tokens"] = min_tokens
     try:
         resp = requests.post(
             _OPENAI_URL, json=body, timeout=(_CONNECT_TIMEOUT, read_timeout),
@@ -79,13 +86,19 @@ def _chat_openai(
         raise AIClientError(f"Unexpected OpenAI response shape: {exc}") from exc
 
 
+_ANTHROPIC_DEFAULT_MAX_TOKENS = 2048
+
+
 def _chat_anthropic(
-    cloud: dict[str, Any], messages: list[dict[str, str]], read_timeout: Optional[float]
+    cloud: dict[str, Any],
+    messages: list[dict[str, str]],
+    read_timeout: Optional[float],
+    min_tokens: Optional[int] = None,
 ) -> str:
     system_text, rest = _split_system(messages)
     body = {
         "model": cloud["model"],
-        "max_tokens": 2048,
+        "max_tokens": max(_ANTHROPIC_DEFAULT_MAX_TOKENS, min_tokens or 0),
         "system": SPEED_PROMPT + ("\n\n" + system_text if system_text else ""),
         "messages": rest,
     }
@@ -121,20 +134,28 @@ def cloud_is_configured(cloud: dict[str, Any] | None) -> bool:
     )
 
 
-def chat_cloud(cloud: dict[str, Any], messages: list[dict[str, str]]) -> str:
+def chat_cloud(
+    cloud: dict[str, Any],
+    messages: list[dict[str, str]],
+    min_tokens: Optional[int] = None,
+) -> str:
     """One completion against the user's chosen internet provider.
 
     ``cloud["timeout_seconds"]`` is the user's configured response timeout —
     None (unset, the default) means no read timeout at all: the request waits
     as long as the provider takes. Only the connection itself is bounded
     (``_CONNECT_TIMEOUT``), so an unreachable host still fails fast.
+
+    ``min_tokens`` floors the reply's token budget for callers that know the
+    answer must be long (e.g. one analysis paragraph per posting) — it never
+    lowers Anthropic's default cap, only raises it when a caller needs more.
     """
     if not cloud_is_configured(cloud):
         raise AIClientError("Cloud AI is not fully configured.")
     read_timeout = cloud.get("timeout_seconds")
     provider = cloud.get("provider") or "openai"
     if provider == "anthropic":
-        text = _chat_anthropic(cloud, messages, read_timeout)
+        text = _chat_anthropic(cloud, messages, read_timeout, min_tokens)
     else:
-        text = _chat_openai(cloud, messages, read_timeout)
+        text = _chat_openai(cloud, messages, read_timeout, min_tokens)
     return _THINK_RE.sub("", text or "").strip()
