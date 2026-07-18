@@ -14,7 +14,7 @@ short, structured answers Career Nexus needs.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 import requests
 
@@ -29,7 +29,12 @@ SPEED_PROMPT = (
     "the answer concise and in exactly the format requested."
 )
 
-_TIMEOUT = (5.0, 120.0)
+# Fixed — this only bounds "can we even reach the provider", not how long a
+# model may think. The response timeout is user-configurable (see chat_cloud):
+# None (the default) means wait as long as it takes, by explicit product
+# choice — a slow answer is still a correct one, and internet models have no
+# local safe-mode fallback worth racing against.
+_CONNECT_TIMEOUT = 10.0
 _OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 _ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 
@@ -41,7 +46,9 @@ def _split_system(messages: list[dict[str, str]]) -> tuple[str, list[dict[str, s
     return "\n\n".join(system_parts), rest
 
 
-def _chat_openai(cloud: dict[str, Any], messages: list[dict[str, str]]) -> str:
+def _chat_openai(
+    cloud: dict[str, Any], messages: list[dict[str, str]], read_timeout: Optional[float]
+) -> str:
     system_text, rest = _split_system(messages)
     body = {
         "model": cloud["model"],
@@ -52,9 +59,14 @@ def _chat_openai(cloud: dict[str, Any], messages: list[dict[str, str]]) -> str:
     }
     try:
         resp = requests.post(
-            _OPENAI_URL, json=body, timeout=_TIMEOUT,
+            _OPENAI_URL, json=body, timeout=(_CONNECT_TIMEOUT, read_timeout),
             headers={"Authorization": f"Bearer {cloud['api_key']}"},
         )
+    except requests.exceptions.Timeout as exc:
+        raise AIClientError(
+            f"OpenAI didn't respond within {read_timeout}s — raise or clear the "
+            "response timeout in your account settings if this keeps happening."
+        ) from exc
     except requests.exceptions.RequestException as exc:
         raise AIClientError(f"Could not reach OpenAI: {exc}") from exc
     if resp.status_code in (401, 403):
@@ -67,7 +79,9 @@ def _chat_openai(cloud: dict[str, Any], messages: list[dict[str, str]]) -> str:
         raise AIClientError(f"Unexpected OpenAI response shape: {exc}") from exc
 
 
-def _chat_anthropic(cloud: dict[str, Any], messages: list[dict[str, str]]) -> str:
+def _chat_anthropic(
+    cloud: dict[str, Any], messages: list[dict[str, str]], read_timeout: Optional[float]
+) -> str:
     system_text, rest = _split_system(messages)
     body = {
         "model": cloud["model"],
@@ -77,10 +91,15 @@ def _chat_anthropic(cloud: dict[str, Any], messages: list[dict[str, str]]) -> st
     }
     try:
         resp = requests.post(
-            _ANTHROPIC_URL, json=body, timeout=_TIMEOUT,
+            _ANTHROPIC_URL, json=body, timeout=(_CONNECT_TIMEOUT, read_timeout),
             headers={"x-api-key": cloud["api_key"],
                      "anthropic-version": "2023-06-01"},
         )
+    except requests.exceptions.Timeout as exc:
+        raise AIClientError(
+            f"Anthropic didn't respond within {read_timeout}s — raise or clear the "
+            "response timeout in your account settings if this keeps happening."
+        ) from exc
     except requests.exceptions.RequestException as exc:
         raise AIClientError(f"Could not reach Anthropic: {exc}") from exc
     if resp.status_code in (401, 403):
@@ -103,12 +122,19 @@ def cloud_is_configured(cloud: dict[str, Any] | None) -> bool:
 
 
 def chat_cloud(cloud: dict[str, Any], messages: list[dict[str, str]]) -> str:
-    """One completion against the user's chosen internet provider."""
+    """One completion against the user's chosen internet provider.
+
+    ``cloud["timeout_seconds"]`` is the user's configured response timeout —
+    None (unset, the default) means no read timeout at all: the request waits
+    as long as the provider takes. Only the connection itself is bounded
+    (``_CONNECT_TIMEOUT``), so an unreachable host still fails fast.
+    """
     if not cloud_is_configured(cloud):
         raise AIClientError("Cloud AI is not fully configured.")
+    read_timeout = cloud.get("timeout_seconds")
     provider = cloud.get("provider") or "openai"
     if provider == "anthropic":
-        text = _chat_anthropic(cloud, messages)
+        text = _chat_anthropic(cloud, messages, read_timeout)
     else:
-        text = _chat_openai(cloud, messages)
+        text = _chat_openai(cloud, messages, read_timeout)
     return _THINK_RE.sub("", text or "").strip()

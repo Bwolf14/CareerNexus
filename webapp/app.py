@@ -303,6 +303,7 @@ def _ai_config() -> dict:
                 "provider": us.get("ai_provider") or "openai",
                 "api_key": us.get("ai_api_key"),
                 "model": us.get("ai_model"),
+                "timeout_seconds": us.get("ai_timeout_seconds"),
             },
         }
     return config
@@ -549,6 +550,7 @@ def account_ai():
     provider = (request.form.get("ai_provider") or "openai").strip().lower()
     api_key = (request.form.get("ai_api_key") or "").strip()[:255]
     model = (request.form.get("ai_model") or "").strip()[:100]
+    timeout_raw = (request.form.get("ai_timeout_seconds") or "").strip()
 
     if provider not in ("openai", "anthropic"):
         provider = "openai"
@@ -559,6 +561,14 @@ def account_ai():
         flash("You must tick the acknowledgement box to enable the internet AI.", "error")
         return redirect(url_for("account"))
 
+    timeout_seconds = None
+    if timeout_raw:
+        try:
+            timeout_seconds = max(5, min(3600, int(float(timeout_raw))))
+        except ValueError:
+            flash("Response timeout must be a number of seconds, or left blank.", "error")
+            return redirect(url_for("account"))
+
     try:
         db.upsert_user_settings(
             current_user()["id"],
@@ -566,6 +576,7 @@ def account_ai():
             ai_provider=provider,
             ai_api_key=api_key or None,
             ai_model=model or None,
+            ai_timeout_seconds=timeout_seconds,
         )
         flash(
             "Internet AI enabled — your AI requests now go to "
@@ -1057,8 +1068,13 @@ def _format_answer(question: dict, answer) -> str:
 
 
 # How many top-ranked picks get AI narrative analysis (the full ranked list in
-# the slide-out panel is heuristic-scored only beyond this).
-AI_ANALYSIS_TOP_N = 10
+# the slide-out panel is heuristic-scored only beyond this). The heuristic
+# score_jobs() ranking already narrows a huge job-library-blended list (e.g.
+# 300 postings) down using the follow-up answers (skills, salary, work style,
+# experience) before this slice is taken — so raising this doesn't mean "send
+# everything to the model," it means the AI gets a wider, still-cheap shortlist
+# to re-rank instead of only ever seeing the heuristic's top 10.
+AI_ANALYSIS_TOP_N = int(os.environ.get("AI_ANALYSIS_TOP_N", "50"))
 
 
 def _plan_picks(parsed: dict, jobs: list, answers: dict | None) -> list[dict]:

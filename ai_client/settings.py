@@ -109,8 +109,12 @@ OPTION_SPECS: list[dict[str, Any]] = [
         "desc": "Size of the model's context window — how much of the resume + "
                 "postings it can read at once.",
         "recommend": "Leave OFF (use the model default) unless long resumes get "
-                     "truncated. Bigger contexts use noticeably more RAM — costly "
-                     "on a CPU-only server.",
+                     "truncated. The career-plan analysis step sends up to "
+                     "AI_ANALYSIS_TOP_N postings (50 by default) in one prompt, "
+                     "which can exceed a small local model's default window — "
+                     "turn this on and raise it if that step falls back to "
+                     "safe mode. Bigger contexts use noticeably more RAM — "
+                     "costly on a CPU-only server.",
     },
     {
         "key": "top_p", "label": "Top-p (nucleus)", "kind": "value",

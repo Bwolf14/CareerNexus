@@ -114,6 +114,7 @@ def _ai_config_for_user(user_id: int) -> dict:
         config = {**config, "cloud": {
             "enabled": True, "provider": us.get("ai_provider") or "openai",
             "api_key": us.get("ai_api_key"), "model": us.get("ai_model"),
+            "timeout_seconds": us.get("ai_timeout_seconds"),
         }}
     return config
 

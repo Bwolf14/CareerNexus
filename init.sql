@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
     ai_provider VARCHAR(20),            -- 'openai' or 'anthropic'
     ai_api_key VARCHAR(255),
     ai_model VARCHAR(100),
+    ai_timeout_seconds INT,             -- NULL = no response timeout at all
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );

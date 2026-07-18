@@ -233,6 +233,67 @@ def test_cloud_openai_payload_includes_speed_preprompt(monkeypatch):
     assert captured["headers"]["Authorization"] == "Bearer sk-x"
 
 
+def test_cloud_defaults_to_no_read_timeout(monkeypatch):
+    """Product requirement: unset timeout means wait as long as it takes."""
+    from ai_client import cloud
+    captured = {}
+
+    class FakeResp:
+        status_code = 200
+        ok = True
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    def fake_post(url, json=None, timeout=None, headers=None):
+        captured["timeout"] = timeout
+        return FakeResp()
+
+    monkeypatch.setattr(cloud.requests, "post", fake_post)
+    cloud.chat_cloud(
+        {"enabled": True, "provider": "openai", "api_key": "sk-x", "model": "gpt-4o-mini"},
+        [{"role": "user", "content": "hi"}],
+    )
+    connect, read = captured["timeout"]
+    assert read is None
+    assert connect == cloud._CONNECT_TIMEOUT
+
+
+def test_cloud_uses_configured_read_timeout(monkeypatch):
+    from ai_client import cloud
+    captured = {}
+
+    class FakeResp:
+        status_code = 200
+        ok = True
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setattr(cloud.requests, "post",
+                        lambda url, json=None, timeout=None, headers=None:
+                        captured.update(timeout=timeout) or FakeResp())
+    cloud.chat_cloud(
+        {"enabled": True, "provider": "openai", "api_key": "sk-x", "model": "gpt-4o-mini",
+         "timeout_seconds": 60},
+        [{"role": "user", "content": "hi"}],
+    )
+    assert captured["timeout"] == (cloud._CONNECT_TIMEOUT, 60)
+
+
+def test_cloud_timeout_raises_clear_ai_error(monkeypatch):
+    from ai_client import cloud
+
+    def fake_post(url, json=None, timeout=None, headers=None):
+        raise cloud.requests.exceptions.Timeout("timed out")
+
+    monkeypatch.setattr(cloud.requests, "post", fake_post)
+    with pytest.raises(AIClientError, match="didn't respond"):
+        cloud.chat_cloud(
+            {"enabled": True, "provider": "openai", "api_key": "sk-x", "model": "m",
+             "timeout_seconds": 5},
+            [{"role": "user", "content": "hi"}],
+        )
+
+
 def test_cloud_anthropic_payload(monkeypatch):
     from ai_client import cloud
     captured = {}
@@ -323,6 +384,28 @@ def test_generate_questions_appends_structured(monkeypatch):
     for required in ("preferred_skills", "salary", "work_style"):
         assert required in ids
     assert len(qs) <= 8
+
+
+def test_generate_questions_sends_only_the_resume(monkeypatch):
+    """Job postings must never reach the interview-question prompt — the
+    questions are about the person, not any specific posting, and sending
+    them was pure wasted tokens/latency on the matches->questions page load."""
+    captured = {}
+
+    def fake_run_chat(settings, messages):
+        captured["messages"] = messages
+        return json.dumps([{"prompt": "Tell me more.", "hint": None}])
+
+    monkeypatch.setattr(features, "run_chat", fake_run_chat)
+    big_job_list = [{"title": f"Job {i}", "description": "x" * 500} for i in range(300)]
+    features.generate_questions(CONFIG, RESUME, jobs=big_job_list)
+
+    user_msg = next(m for m in captured["messages"] if m["role"] == "user")
+    payload = json.loads(user_msg["content"])
+    assert "resume" in payload
+    assert "matched_postings_sample" not in payload
+    assert "jobs" not in payload
+    assert "Job 0" not in user_msg["content"]
 
 
 def test_generate_questions_rejects_garbage(monkeypatch):

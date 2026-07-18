@@ -103,6 +103,11 @@ become healthy before serving. Connect a client like DBeaver to
 > `docker compose exec db mariadb -uroot -pCareerNexPass32 careernexus_db < init.sql`.
 > The app degrades gracefully without the new tables, but the new features
 > (tracker, alerts, background scrapes) need them.
+>
+> **Adding just the BYO-AI response-timeout column:** if you already have data
+> worth keeping (e.g. an accumulated job library) and don't want a full
+> `down -v`, add the one new column directly — it's additive and safe:
+> `docker compose exec db mariadb -uroot -pCareerNexPass32 careernexus_db -e "ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_timeout_seconds INT NULL;"`
 
 | Service  | Image / build  | Port  | Notes                                      |
 | -------- | -------------- | ----- | ------------------------------------------ |
@@ -194,7 +199,11 @@ before exposing it). From the portal an admin can:
   enabled, THEIR AI requests go to that provider instead of the local models,
   with a hidden pre-prompt disabling extended thinking for fast, high-quality
   answers. Resume data leaves the server when this is on — the user accepts
-  responsibility explicitly.
+  responsibility explicitly. They can also set their own **response timeout**
+  in seconds; left blank (the default), a request has **no timeout at all** —
+  a slow answer just takes as long as it takes, with a warning to that effect
+  on the account page. The connection itself still fails fast if the provider
+  is unreachable.
 * **Per-model timeouts** — connect + response timeouts are rows in the admin
   options matrix, so each model slot can have its own.
 * **Tailor my resume** (`/tailor/...`) — per-posting advice on which of your
@@ -353,12 +362,24 @@ in the admin portal):
 | `AI_BASE_URL`      | `http://192.168.1.50:11434`   | A networked Ollama server            |
 | `AI_MODEL`         | `qwen2.5:3b`                  | Model tag (`ollama list`)            |
 | `OLLAMA_LOCAL_URL` | `http://ollama:11434`         | The bundled local Ollama service     |
+| `AI_ANALYSIS_TOP_N` | `50`                        | How many heuristically-top-ranked postings get full AI narrative analysis (see below) |
 
-Questionnaires are cached per search (so answers map to the questions shown);
-career-plan analyses are cached and regenerate when answers/shortlist change.
-The plan page loads instantly with the heuristic shortlist and an **“AI
-thinking…”** banner, then fills in the model's narrative in place (via a
-background request) so you can browse while it works.
+Questionnaires are cached per search (so answers map to the questions shown)
+and **only the resume is sent to the model** — job postings never reach the
+follow-up-question prompt, since the questions are about the person, not any
+specific posting. Career-plan analyses are cached and regenerate when
+answers/shortlist change. The plan page loads instantly with the heuristic
+shortlist and an **“AI thinking…”** banner, then fills in the model's
+narrative in place (via a background request) so you can browse while it
+works.
+
+The heuristic ranking (skills, title, pay, work style, and the
+follow-up-question answers, including years of experience) narrows however
+many postings the search collected — potentially hundreds once the job
+library is blended in — down to the top `AI_ANALYSIS_TOP_N` (50 by default)
+before anything is sent to the model for narrative analysis. The full ranked
+list still shows in the slide-out panel; only that top slice gets the AI's
+2–3 sentence per-posting writeup and personal fit score.
 
 > **CPU-only note:** the default deployment has no GPU, so the local catalog
 > favours small models (0.5B–3B). 7B+ models run but are slow on CPU — the
