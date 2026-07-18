@@ -647,3 +647,31 @@ def test_library_requires_login(anon_client):
     resp = anon_client.get("/library")
     assert resp.status_code == 302
     assert "/login" in resp.headers["Location"]
+
+
+# ---------------------------------------------------------------------------
+# Experience slider question
+# ---------------------------------------------------------------------------
+def test_questions_page_renders_experience_slider(client):
+    resp = client.get("/questions/7")
+    assert resp.status_code == 200
+    assert b'data-exp-slider' in resp.data
+    assert b'name="experience_years"' in resp.data
+    # Pre-filled from the resume (PARSED has experience dating back years).
+    assert b"from your resume" in resp.data
+
+
+def test_collect_answers_parses_experience_value():
+    from werkzeug.datastructures import MultiDict
+
+    qs = [{"id": "experience_years", "type": "experience"}]
+    assert app_module._collect_answers(qs, MultiDict({"experience_years": "7"})) == \
+        {"experience_years": 7}
+    # Zero is a meaningful answer (entry level), not an empty one.
+    assert app_module._collect_answers(qs, MultiDict({"experience_years": "0"})) == \
+        {"experience_years": 0}
+    # Clamped and junk-tolerant.
+    assert app_module._collect_answers(qs, MultiDict({"experience_years": "999"})) == \
+        {"experience_years": 60}
+    assert app_module._collect_answers(qs, MultiDict({"experience_years": "abc"})) == {}
+    assert app_module._collect_answers(qs, MultiDict({})) == {}

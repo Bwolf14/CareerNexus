@@ -123,6 +123,68 @@ def _fmt_money(n: float) -> str:
     return f"${n:,.0f}"
 
 
+# --- Experience / seniority ------------------------------------------------
+# "5+ years", "3-5 yrs", "minimum of 4 years" … only counted when the word
+# "experience" appears nearby, so "10 years in business" doesn't trigger it.
+_YEARS_RE = re.compile(
+    r"(\d{1,2})(?:\s*(?:-|–|to)\s*(\d{1,2}))?\s*\+?\s*(?:years?|yrs?)", re.I
+)
+
+# Seniority implied by title words when the description names no year figure.
+# _tokens() strips these as stopwords, so match on the raw title text.
+_TITLE_LEVELS: list[tuple[set[str], int]] = [
+    ({"vp", "vice", "chief", "cto", "cio", "ceo", "executive"}, 15),
+    ({"director", "head"}, 12),
+    ({"principal", "staff", "lead"}, 8),
+    ({"manager", "supervisor"}, 7),
+    ({"senior", "sr"}, 5),
+]
+_ENTRY_WORDS = {"intern", "internship", "trainee", "entry", "junior", "jr", "co-op", "coop"}
+
+
+def _required_years(job: dict[str, Any]) -> Optional[int]:
+    """Best-effort minimum years of experience a posting asks for.
+
+    Prefers explicit "N+ years … experience" phrases in the description (the
+    largest lower bound wins — that's the binding requirement); falls back to
+    what the title implies (Senior ≈ 5+, Director ≈ 12+, entry words ≈ 0).
+    Returns None when there's no signal either way.
+    """
+    desc = (job.get("description") or "").lower()
+    found: list[int] = []
+    for m in _YEARS_RE.finditer(desc):
+        lo = int(m.group(1))
+        # Directional proximity: "5+ years of experience" (after) or
+        # "experience: 3-5 years" (just before). A loose window let unrelated
+        # figures ("10 years company history") ride an earlier mention.
+        after = desc[m.end(): m.end() + 30]
+        before = desc[max(0, m.start() - 20): m.start()]
+        if lo <= 30 and ("experien" in after or "experien" in before):
+            found.append(lo)
+    if found:
+        return max(found)
+
+    title_words = set(re.findall(r"[a-z]+(?:-[a-z]+)?", (job.get("title") or "").lower()))
+    if title_words & _ENTRY_WORDS:
+        return 0
+    for words, years in _TITLE_LEVELS:
+        if title_words & words:
+            return years
+    return None
+
+
+def _parse_user_years(answers: dict[str, Any]) -> Optional[int]:
+    """The user's stated years of experience (the slider answer), or None."""
+    raw = answers.get("experience_years")
+    if raw in (None, ""):
+        return None
+    try:
+        years = int(float(str(raw).strip().rstrip("+")))
+    except ValueError:
+        return None
+    return max(0, min(60, years))
+
+
 def _score_one(
     job: dict[str, Any],
     *,
@@ -132,6 +194,7 @@ def _score_one(
     work_style: Optional[str],
     user_min: Optional[float],
     user_max: Optional[float],
+    user_years: Optional[int] = None,
 ) -> dict[str, Any]:
     reasons: list[str] = []
     concerns: list[str] = []
@@ -216,6 +279,33 @@ def _score_one(
                 "below the range you gave"
             )
 
+    # --- Experience / seniority fit: +8 to -12 points --------------------------
+    # A great topical match still isn't the #1 pick if the posting wants far
+    # more (or far less) experience than the user said they have.
+    if user_years is not None:
+        required = _required_years(job)
+        if required is not None:
+            if user_years >= required:
+                if required <= 2 and user_years - required >= 10:
+                    score -= 6
+                    concerns.append(
+                        "Reads as an entry-level role — likely below the "
+                        f"seniority you're targeting with {user_years} years"
+                    )
+                else:
+                    score += 8
+                    reasons.append(
+                        f"Experience level fits — asks for ~{required}+ years "
+                        f"and you have {user_years}"
+                    )
+            else:
+                deficit = required - user_years
+                score -= min(12, 4 * deficit)
+                concerns.append(
+                    f"Asks for ~{required}+ years of experience — above the "
+                    f"{user_years} you gave, so it may be a stretch"
+                )
+
     # --- Freshness: up to 5 points ---------------------------------------------
     if _recent(job):
         score += 5
@@ -255,6 +345,7 @@ def score_jobs(
         preferred = [preferred]
     work_style = answers.get("work_style")
     user_min, user_max = _parse_user_range(answers)
+    user_years = _parse_user_years(answers)
 
     scored = [
         _score_one(
@@ -265,6 +356,7 @@ def score_jobs(
             work_style=work_style,
             user_min=user_min,
             user_max=user_max,
+            user_years=user_years,
         )
         for job in jobs
     ]

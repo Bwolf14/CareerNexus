@@ -63,6 +63,20 @@
                               {{ 'checked' if opt in ((answers or {}).get(q.id) or []) else '' }} /><span>{{ opt }}</span></label>
               {% endfor %}
             </div>
+          {% elif q.type == 'experience' %}
+            {% set exp_val = (answers or {}).get(q.id) %}
+            {% if exp_val is none %}{% set exp_val = q.get('default') %}{% endif %}
+            {% if exp_val is none %}{% set exp_val = 0 %}{% endif %}
+            <div class="exp-row" data-exp>
+              <input type="range" min="0" max="40" step="1" value="{{ exp_val }}"
+                     data-exp-slider aria-label="Years of experience" />
+              <div class="exp-value">
+                <input type="number" min="0" max="60" step="1" name="{{ q.id }}"
+                       value="{{ exp_val }}" data-exp-num aria-label="Years of experience (exact)" />
+                <span class="exp-units">years</span>
+              </div>
+              <span class="badge ai exp-level" data-exp-level></span>
+            </div>
           {% elif q.type == 'salary' %}
             {% set sal = (answers or {}).get(q.id) or {} %}
             <div class="salary-row">
@@ -124,6 +138,35 @@
         }
       });
     });
+  });
+
+  // Experience slider: keep the range, the number box, and the level label in
+  // sync. The label bands mirror job_matcher/experience.py.
+  document.querySelectorAll('[data-exp]').forEach(row => {
+    const slider = row.querySelector('[data-exp-slider]');
+    const num = row.querySelector('[data-exp-num]');
+    const label = row.querySelector('[data-exp-level]');
+    const levelFor = y => {
+      if (y <= 1) return 'Entry level';
+      if (y <= 4) return 'Junior / early career';
+      if (y <= 9) return 'Intermediate / senior';
+      if (y <= 14) return 'Senior / lead';
+      if (y <= 24) return 'Management / principal';
+      return 'Executive / senior leadership';
+    };
+    const paint = y => {
+      label.textContent = (y >= 40 ? '40+ yrs — ' : '') + levelFor(y);
+    };
+    slider.addEventListener('input', () => {
+      num.value = slider.value;
+      paint(parseInt(slider.value, 10));
+    });
+    num.addEventListener('input', () => {
+      const y = Math.max(0, Math.min(60, parseInt(num.value, 10) || 0));
+      slider.value = Math.min(y, 40);
+      paint(y);
+    });
+    paint(parseInt(num.value, 10) || 0);
   });
 </script>
 {% endblock %}

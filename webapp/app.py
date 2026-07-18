@@ -1019,6 +1019,13 @@ def _collect_answers(question_list: list[dict], form) -> dict:
                 values = values[:max_select]  # enforce the pick limit server-side too
             if values:
                 answers[qid] = values
+        elif q["type"] == "experience":
+            raw = (form.get(qid) or "").strip()
+            if raw:
+                try:
+                    answers[qid] = max(0, min(60, int(float(raw))))
+                except ValueError:
+                    pass
         elif q["type"] == "salary":
             salary = {
                 "min": (form.get(f"{qid}_min") or "").strip(),
@@ -1038,6 +1045,8 @@ def _collect_answers(question_list: list[dict], form) -> dict:
 # Step 5 — the career plan
 # ---------------------------------------------------------------------------
 def _format_answer(question: dict, answer) -> str:
+    if question["type"] == "experience":
+        return f"{answer} year{'' if str(answer) == '1' else 's'} of experience"
     if question["type"] == "salary" and isinstance(answer, dict):
         lo = answer.get("min") or "?"
         hi = answer.get("max") or "?"

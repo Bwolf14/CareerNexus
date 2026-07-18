@@ -598,3 +598,14 @@ pre.json { background: var(--inset); border: 1px solid var(--border-soft); borde
                             color: var(--accent); line-height: 1.15; }
 .library-stats .stat .lbl { font-size: .72rem; color: var(--faint); font-weight: 700;
                             letter-spacing: .05em; text-transform: uppercase; }
+
+/* Experience slider on the questions page */
+.exp-row { display: flex; align-items: center; gap: 1rem; margin: .35rem 0 .2rem; }
+.exp-row input[type="range"] { flex: 1; min-width: 160px; accent-color: var(--accent); }
+.exp-value { display: flex; align-items: baseline; gap: .35rem; }
+.exp-value input[type="number"] { width: 5.2rem; }
+.exp-units { font-size: .82rem; color: var(--muted); font-weight: 600; }
+.exp-level { white-space: nowrap; }
+@media (max-width: 640px) {
+  .exp-row { flex-wrap: wrap; }
+}

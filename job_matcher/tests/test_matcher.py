@@ -223,3 +223,106 @@ def test_tips_reference_top_cert_gap():
     analysis = analyze_certifications(resume, jobs)
     tips = build_resume_tips(resume, cert_analysis=analysis)
     assert any("certification gap" in t["title"].lower() for t in tips)
+
+
+# ---------------------------------------------------------------------------
+# experience estimation + seniority-aware scoring
+# ---------------------------------------------------------------------------
+def test_estimate_experience_merges_overlapping_ranges():
+    from job_matcher.experience import estimate_experience_years
+
+    resume = make_resume(experience=[
+        {"title": "Tech", "company": "A",
+         "dates": {"start_date": "2015-01", "end_date": "2018-06", "is_current": False}},
+        # Overlaps the first job — must not double-count.
+        {"title": "Consultant", "company": "B",
+         "dates": {"start_date": "2017-01", "end_date": "2019-12", "is_current": False}},
+    ])
+    assert estimate_experience_years(resume) == 5  # 2015-01 → 2019-12
+
+
+def test_estimate_experience_counts_gaps_separately():
+    from job_matcher.experience import estimate_experience_years
+
+    resume = make_resume(experience=[
+        {"title": "Tech", "company": "A",
+         "dates": {"start_date": "2010", "end_date": "2012", "is_current": False}},
+        {"title": "Tech", "company": "B",
+         "dates": {"start_date": "2018-01", "end_date": "2019-12", "is_current": False}},
+    ])
+    # 2010→2012 (3 yrs, year-only dates span whole years) + 2018→2019 (2 yrs)
+    assert estimate_experience_years(resume) == 5
+
+
+def test_estimate_experience_none_without_dates():
+    from job_matcher.experience import estimate_experience_years
+
+    resume = make_resume(experience=[
+        {"title": "Tech", "company": "A",
+         "dates": {"start_date": None, "end_date": None, "is_current": False}},
+    ])
+    assert estimate_experience_years(resume) is None
+    assert estimate_experience_years(make_resume(experience=[])) is None
+
+
+def test_experience_question_in_tail_with_default():
+    qs = build_questions(make_resume())
+    exp = next(q for q in qs if q["id"] == "experience_years")
+    assert exp["type"] == "experience"
+    assert isinstance(exp["default"], int) and exp["default"] >= 3  # current since 2022-01
+    assert len(qs) <= MAX_QUESTIONS
+    # The structured tail must survive the cap alongside the new question.
+    ids = {q["id"] for q in qs}
+    assert {"salary", "work_style", "priorities"} <= ids
+
+
+def test_required_years_from_description_and_title():
+    from job_matcher.scoring import _required_years
+
+    assert _required_years(make_job(
+        description="We need 5+ years of experience with Cisco networks."
+    )) == 5
+    assert _required_years(make_job(
+        description="3-5 years experience required; 10 years company history."
+    )) == 3
+    # Bare numbers far from the word "experience" don't count; title decides.
+    assert _required_years(make_job(
+        title="Senior Network Engineer", description="Great team."
+    )) == 5
+    assert _required_years(make_job(
+        title="Junior Network Technician", description="Great team."
+    )) == 0
+    assert _required_years(make_job(
+        title="Network Technician", description="Great team."
+    )) is None
+
+
+def test_scoring_penalises_experience_shortfall():
+    resume = make_resume()
+    demanding = make_job(external_id="hard", company="BigCo",
+                         description=make_job()["description"]
+                         + " Requires 10+ years of experience.")
+    modest = make_job(external_id="easy", company="SmallCo")
+
+    with_years = score_jobs(resume, [demanding, modest],
+                            {"experience_years": 2}, top_n=2)
+    assert with_years[0]["job"]["external_id"] == "easy"
+    hard = next(s for s in with_years if s["job"]["external_id"] == "hard")
+    assert any("years of experience" in c for c in hard["concerns"])
+
+    # Without the answer, no experience judgement is made.
+    neutral = score_jobs(resume, [demanding, modest], {}, top_n=2)
+    hard_n = next(s for s in neutral if s["job"]["external_id"] == "hard")
+    assert not any("years of experience" in c for c in hard_n["concerns"])
+
+
+def test_scoring_rewards_experience_fit_and_flags_entry_overshoot():
+    resume = make_resume()
+    fit = make_job(description=make_job()["description"]
+                   + " 5+ years of experience preferred.")
+    scored = score_jobs(resume, [fit], {"experience_years": 7}, top_n=1)[0]
+    assert any("Experience level fits" in r for r in scored["reasons"])
+
+    entry = make_job(title="Junior Network Technician")
+    scored = score_jobs(resume, [entry], {"experience_years": 20}, top_n=1)[0]
+    assert any("entry-level" in c for c in scored["concerns"])
