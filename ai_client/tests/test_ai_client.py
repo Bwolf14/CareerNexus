@@ -373,7 +373,7 @@ def test_cloud_anthropic_max_tokens_raised_for_a_big_batch(monkeypatch):
     assert captured["body"]["max_tokens"] == cloud._ANTHROPIC_DEFAULT_MAX_TOKENS
 
 
-def test_cloud_openai_max_tokens_only_set_when_min_tokens_given(monkeypatch):
+def test_cloud_openai_output_cap_only_set_when_min_tokens_given(monkeypatch):
     from ai_client import cloud
     captured = {}
 
@@ -391,13 +391,75 @@ def test_cloud_openai_max_tokens_only_set_when_min_tokens_given(monkeypatch):
         [{"role": "user", "content": "hi"}],
     )
     assert "max_tokens" not in captured["body"]
+    assert "max_completion_tokens" not in captured["body"]
 
+    # Newer OpenAI models reject the legacy "max_tokens" outright, so the
+    # modern parameter name is what goes out by default.
     cloud.chat_cloud(
         {"enabled": True, "provider": "openai", "api_key": "sk-x", "model": "m"},
         [{"role": "user", "content": "hi"}],
         min_tokens=4750,
     )
-    assert captured["body"]["max_tokens"] == 4750
+    assert captured["body"]["max_completion_tokens"] == 4750
+    assert "max_tokens" not in captured["body"]
+
+
+def test_cloud_openai_retries_with_legacy_max_tokens(monkeypatch):
+    """Old models / OpenAI-compatible gateways that don't know
+    max_completion_tokens get one retry with the legacy parameter name."""
+    from ai_client import cloud
+    bodies = []
+
+    class Rejected:
+        status_code = 400
+        ok = False
+        text = ('{"error": {"message": "Unrecognized request argument supplied: '
+                'max_completion_tokens"}}')
+
+    class Accepted:
+        status_code = 200
+        ok = True
+        def json(self):
+            return {"choices": [{"message": {"content": "legacy ok"}}]}
+
+    def fake_post(url, json=None, timeout=None, headers=None):
+        bodies.append(json)
+        return Rejected() if "max_completion_tokens" in json else Accepted()
+
+    monkeypatch.setattr(cloud.requests, "post", fake_post)
+    out = cloud.chat_cloud(
+        {"enabled": True, "provider": "openai", "api_key": "sk-x", "model": "old-model"},
+        [{"role": "user", "content": "hi"}],
+        min_tokens=4750,
+    )
+    assert out == "legacy ok"
+    assert len(bodies) == 2
+    assert bodies[0]["max_completion_tokens"] == 4750
+    assert "max_completion_tokens" not in bodies[1]
+    assert bodies[1]["max_tokens"] == 4750
+
+
+def test_cloud_openai_unrelated_400_is_not_retried(monkeypatch):
+    from ai_client import cloud
+    calls = {"n": 0}
+
+    class Bad:
+        status_code = 400
+        ok = False
+        text = '{"error": {"message": "model not found"}}'
+
+    def fake_post(url, json=None, timeout=None, headers=None):
+        calls["n"] += 1
+        return Bad()
+
+    monkeypatch.setattr(cloud.requests, "post", fake_post)
+    with pytest.raises(AIClientError, match="HTTP 400"):
+        cloud.chat_cloud(
+            {"enabled": True, "provider": "openai", "api_key": "sk-x", "model": "m"},
+            [{"role": "user", "content": "hi"}],
+            min_tokens=4750,
+        )
+    assert calls["n"] == 1
 
 
 def test_cloud_anthropic_payload(monkeypatch):

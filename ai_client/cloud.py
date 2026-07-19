@@ -60,22 +60,42 @@ def _chat_openai(
               + ("\n\n" + system_text if system_text else "")}] + rest
         ),
     }
-    # OpenAI defaults max_tokens to the model's own output limit when omitted
-    # (already generous), so only set it when a caller needs a guaranteed floor.
+    # OpenAI defaults the output cap to the model's own limit when omitted
+    # (already generous), so only set it when a caller needs a guaranteed
+    # floor. Newer models (o-series, gpt-5, recent gpt-4o snapshots) ONLY
+    # accept "max_completion_tokens" and 400 on the legacy "max_tokens";
+    # older models and some OpenAI-compatible gateways only know the legacy
+    # name — so send the modern one first and retry once with the other if
+    # the API says the parameter is unsupported.
     if min_tokens:
-        body["max_tokens"] = min_tokens
-    try:
-        resp = requests.post(
-            _OPENAI_URL, json=body, timeout=(_CONNECT_TIMEOUT, read_timeout),
-            headers={"Authorization": f"Bearer {cloud['api_key']}"},
-        )
-    except requests.exceptions.Timeout as exc:
-        raise AIClientError(
-            f"OpenAI didn't respond within {read_timeout}s — raise or clear the "
-            "response timeout in your account settings if this keeps happening."
-        ) from exc
-    except requests.exceptions.RequestException as exc:
-        raise AIClientError(f"Could not reach OpenAI: {exc}") from exc
+        body["max_completion_tokens"] = min_tokens
+
+    def post(payload: dict[str, Any]):
+        try:
+            return requests.post(
+                _OPENAI_URL, json=payload, timeout=(_CONNECT_TIMEOUT, read_timeout),
+                headers={"Authorization": f"Bearer {cloud['api_key']}"},
+            )
+        except requests.exceptions.Timeout as exc:
+            raise AIClientError(
+                f"OpenAI didn't respond within {read_timeout}s — raise or clear the "
+                "response timeout in your account settings if this keeps happening."
+            ) from exc
+        except requests.exceptions.RequestException as exc:
+            raise AIClientError(f"Could not reach OpenAI: {exc}") from exc
+
+    resp = post(body)
+    if (
+        min_tokens
+        and resp.status_code == 400
+        and "max_completion_tokens" in resp.text
+        and "max_completion_tokens" in body
+    ):
+        legacy = dict(body)
+        legacy.pop("max_completion_tokens")
+        legacy["max_tokens"] = min_tokens
+        resp = post(legacy)
+
     if resp.status_code in (401, 403):
         raise AIClientError("OpenAI rejected the API key — check it in your account settings.")
     if not resp.ok:
