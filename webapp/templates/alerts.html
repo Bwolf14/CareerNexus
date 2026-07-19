@@ -26,6 +26,8 @@
                 <div class="jobmeta">
                   {% if s.params.filter_company %}<span class="pill">🏢 {{ s.params.filter_company }}</span>{% endif %}
                   {% if s.params.filter_title %}<span class="pill">💼 title: {{ s.params.filter_title }}</span>{% endif %}
+                  {% if s.params.get('experience_years') is not none %}
+                    <span class="pill">🎯 ~{{ s.params.experience_years }} yrs exp</span>{% endif %}
                   {% if s.params.keywords %}{{ s.params.keywords | join(', ') }}{% endif %}
                   {% if s.params.location %}· 📍 {{ s.params.location }}{% endif %}
                 </div>
@@ -99,6 +101,27 @@
             The AI pulls smart search keywords out of this, and every new posting is scored
             0–100 for how close it is to this description — only postings above your
             likeness threshold trigger the alert.</div>
+        </div>
+
+        <div>
+          <label class="field-label">Your experience — and the level of role to alert on</label>
+          <div class="exp-row" data-exp>
+            <input type="range" min="0" max="40" step="1" value="0"
+                   data-exp-slider aria-label="Years of experience" />
+            <div class="exp-value">
+              <input type="number" min="0" max="60" step="1" name="experience_years"
+                     id="alert-exp-years" value="" data-exp-num
+                     aria-label="Years of experience (exact)" />
+              <span class="exp-units">years</span>
+            </div>
+            <span class="badge ai exp-level" data-exp-level></span>
+          </div>
+          <div class="field-hint" style="color:var(--faint); font-size:.78rem; margin-top:.3rem;">
+            Auto-filled from the selected resume — correct it if it's off, or clear it to
+            skip experience filtering. This is a <strong>soft</strong> filter with wiggle
+            room: a "5+ years" posting still alerts someone with 3 (flagged as a stretch —
+            people land those). Only roles far beyond your level are skipped, so a
+            near-miss dream job never slips by silently.</div>
         </div>
 
         <div>
@@ -193,4 +216,59 @@
       <div class="actions"><a class="btn" href="/">Upload a resume</a></div>
     {% endif %}
   </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Experience slider: sync range <-> number box <-> level label. Blank means
+  // "no experience filtering", so the label reflects that instead of a level.
+  // Level bands mirror job_matcher/experience.py.
+  const RESUME_YEARS = {{ (resume_years or {}) | tojson }};
+
+  document.querySelectorAll('[data-exp]').forEach(row => {
+    const slider = row.querySelector('[data-exp-slider]');
+    const num = row.querySelector('[data-exp-num]');
+    const label = row.querySelector('[data-exp-level]');
+    const levelFor = y => {
+      if (y <= 1) return 'Entry level';
+      if (y <= 4) return 'Junior / early career';
+      if (y <= 9) return 'Intermediate / senior';
+      if (y <= 14) return 'Senior / lead';
+      if (y <= 24) return 'Management / principal';
+      return 'Executive / senior leadership';
+    };
+    const paint = () => {
+      if (num.value === '') { label.textContent = 'no experience filter'; return; }
+      const y = parseInt(num.value, 10) || 0;
+      label.textContent = (y >= 40 ? '40+ yrs — ' : '') + levelFor(y);
+    };
+    slider.addEventListener('input', () => { num.value = slider.value; paint(); });
+    num.addEventListener('input', () => {
+      if (num.value !== '') {
+        const y = Math.max(0, Math.min(60, parseInt(num.value, 10) || 0));
+        slider.value = Math.min(y, 40);
+      }
+      paint();
+    });
+    paint();
+  });
+
+  // Pre-fill the experience control from the selected resume's estimate.
+  // Only auto-overwrite while the user hasn't typed their own number.
+  const resumeSel = document.getElementById('resume_id');
+  const expNum = document.getElementById('alert-exp-years');
+  if (resumeSel && expNum) {
+    let userEdited = false;
+    expNum.addEventListener('input', () => { userEdited = true; });
+    const fill = () => {
+      if (userEdited) return;
+      const est = RESUME_YEARS[resumeSel.value];
+      expNum.value = (est === undefined || est === null) ? '' : est;
+      expNum.dispatchEvent(new Event('input'));
+      userEdited = false;  // programmatic input above shouldn't count
+    };
+    resumeSel.addEventListener('change', fill);
+    fill();
+  }
+</script>
 {% endblock %}

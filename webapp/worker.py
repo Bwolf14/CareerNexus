@@ -27,6 +27,7 @@ import time
 from datetime import datetime, timedelta
 
 from ai_client import AIClientError, load_settings, score_dream_likeness
+from job_matcher.scoring import _required_years
 from job_scraper import dedupe_cross_board
 
 from . import configure_logging, db, email_utils, notifications, search_service
@@ -119,6 +120,53 @@ def _ai_config_for_user(user_id: int) -> dict:
     return config
 
 
+def _experience_wiggle(user_years: int) -> int:
+    """How many years above the user's experience a posting may ask for and
+    still be alert-worthy.
+
+    Deliberately soft: someone with 3 years genuinely lands "5+ years" roles,
+    so a hard cutoff would hide real chances. At least 2 years of stretch,
+    growing with seniority (a 12-year person can reasonably chase a "15+"
+    role). Only wildly-out-of-range postings — 15 required vs 2 held — are
+    dropped.
+    """
+    return max(2, round(user_years * 0.25))
+
+
+def _experience_gate(fresh: list[dict], params: dict) -> list[dict]:
+    """Soft seniority filter for alert candidates.
+
+    Postings within the wiggle room pass (annotated ``stretch_years`` when
+    they ask for more than the user has, so the alert can say "a stretch");
+    postings far beyond it are dropped. No stated experience, or no readable
+    requirement on the posting → everything passes untouched.
+    """
+    raw = params.get("experience_years")
+    if raw in (None, ""):
+        return fresh
+    try:
+        user_years = max(0, min(60, int(raw)))
+    except (TypeError, ValueError):
+        return fresh
+
+    wiggle = _experience_wiggle(user_years)
+    kept: list[dict] = []
+    for job in fresh:
+        required = _required_years(job)
+        if required is None or required <= user_years:
+            kept.append(job)
+            continue
+        deficit = required - user_years
+        if deficit <= wiggle:
+            job = dict(job)
+            job["stretch_years"] = required  # within reach — flag, don't hide
+            kept.append(job)
+    if len(kept) != len(fresh):
+        log.info("experience gate: %s/%s postings within ~%s+%s years",
+                 len(kept), len(fresh), user_years, wiggle)
+    return kept
+
+
 def _apply_likeness(ss: dict, fresh: list[dict]) -> list[dict]:
     """AI dream-job likeness gate: keep postings scoring >= the alert's bar.
 
@@ -130,6 +178,16 @@ def _apply_likeness(ss: dict, fresh: list[dict]) -> list[dict]:
     if not dream or not fresh:
         return fresh
     threshold = int(params.get("likeness_threshold") or 70)
+    # Give the model the user's seniority as context: the likeness score
+    # should treat a role far above/below their level as less like the dream,
+    # while leaving modest stretches (already passed the experience gate) in.
+    years = params.get("experience_years")
+    if years not in (None, ""):
+        dream = (
+            f"{dream}\n\n(Candidate context: about {years} years of experience "
+            "in the field — roles wildly above or below that seniority are "
+            "less like this dream, but a modest stretch is fine.)"
+        )
     try:
         scores = score_dream_likeness(_ai_config_for_user(ss["user_id"]), dream, fresh)
     except AIClientError as exc:
@@ -182,6 +240,7 @@ def _handle_alert(saved_search_id: int, new_search_id: int) -> None:
             j for j in new_jobs
             if j.get("dedup_key") not in old_keys and _matches_criteria(j, params)
         ]
+        fresh = _experience_gate(fresh, params)
         fresh = _apply_likeness(ss, fresh)
         if fresh:
             _send_alert(ss, new_search_id, fresh)
@@ -208,6 +267,9 @@ def _send_alert(ss: dict, search_id: int, fresh: list) -> None:
         )
         if j.get("likeness") is not None:
             bits += f" · {j['likeness']}% match to your dream job"
+        if j.get("stretch_years"):
+            bits += (f" · a stretch (asks ~{j['stretch_years']}+ yrs) — "
+                     "still worth a shot")
         lines.append(f"• {bits}")
         if j.get("job_url"):
             lines.append(f"  {j['job_url']}")
