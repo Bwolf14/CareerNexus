@@ -75,6 +75,7 @@ from job_matcher import (
     score_jobs,
     tailor_for_job,
 )
+from job_matcher.experience import estimate_experience_years
 from job_scraper import DEFAULT_DEPTH, DEFAULT_SITES, DEPTH_PRESETS, dedupe_cross_board
 from job_scraper.output import build_payload
 from job_scraper.scraper import COUNTRY_INDEED
@@ -1585,10 +1586,23 @@ def alerts_page():
         resumes = db.list_resumes(user_id=uid)
     except Exception as exc:
         db_error = str(exc)
+
+    # Estimated years of experience per resume, for pre-filling the alert
+    # form's experience slider when a resume is picked (user-correctable).
+    resume_years: dict[int, int] = {}
+    for r in resumes:
+        try:
+            est = estimate_experience_years(db.get_resume_json(r["id"]) or {})
+        except Exception:
+            est = None
+        if est is not None:
+            resume_years[r["id"]] = est
+
     return render_template(
         "alerts.html",
         saved_searches=saved_searches,
         resumes=resumes,
+        resume_years=resume_years,
         db_error=db_error,
         site_choices=SITE_CHOICES,
         default_sites=DEFAULT_SITES,
@@ -1631,6 +1645,16 @@ def alerts_create():
     except ValueError:
         threshold = 70
     params["likeness_threshold"] = max(0, min(100, threshold))
+
+    # Years of experience (pre-filled from the resume, user-correctable).
+    # The worker uses it as a SOFT seniority gate with wiggle room — a "5+
+    # years" posting still alerts someone with 3, flagged as a stretch.
+    exp_raw = (request.form.get("experience_years") or "").strip()
+    if exp_raw:
+        try:
+            params["experience_years"] = max(0, min(60, int(float(exp_raw))))
+        except ValueError:
+            pass
 
     # Specific alert criteria: only postings matching these fire the alert
     # (e.g. company "Google" + title contains "engineer"). The company is also

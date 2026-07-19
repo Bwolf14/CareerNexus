@@ -888,6 +888,88 @@ def test_worker_likeness_falls_back_when_ai_down(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Alert experience gate (soft, with wiggle room)
+# ---------------------------------------------------------------------------
+def test_alert_experience_gate_wiggle_room():
+    from webapp import worker
+
+    jobs = [
+        {"title": "Network Tech", "description": "No requirements listed."},
+        {"title": "Network Engineer",
+         "description": "Requires 5+ years of experience with Cisco."},
+        {"title": "Principal Architect",
+         "description": "Minimum 15 years of experience required."},
+    ]
+    # 3 years stated: the unlabelled job passes, the 5+ role passes AS A
+    # STRETCH (people land those), the 15-year role is dropped.
+    kept = worker._experience_gate(list(jobs), {"experience_years": 3})
+    titles = [j["title"] for j in kept]
+    assert titles == ["Network Tech", "Network Engineer"]
+    stretch = next(j for j in kept if j["title"] == "Network Engineer")
+    assert stretch["stretch_years"] == 5
+    assert "stretch_years" not in kept[0]
+
+    # No stated experience → gate is a no-op.
+    assert worker._experience_gate(list(jobs), {}) == jobs
+    assert worker._experience_gate(list(jobs), {"experience_years": ""}) == jobs
+
+
+def test_alert_experience_wiggle_scales_with_seniority():
+    from webapp import worker
+    assert worker._experience_wiggle(0) == 2
+    assert worker._experience_wiggle(3) == 2     # 5+ roles reachable with 3
+    assert worker._experience_wiggle(12) == 3    # 15+ reachable with 12
+    assert worker._experience_wiggle(20) == 5
+
+
+def test_alert_likeness_gets_experience_context(monkeypatch):
+    from webapp import worker
+    ss = {"id": 2, "user_id": 1,
+          "params": {"dream_description": "network engineer at a bank",
+                     "likeness_threshold": 70, "experience_years": 3}}
+    captured = {}
+    monkeypatch.setattr(worker, "score_dream_likeness",
+                        lambda cfg, dream, jobs: captured.update(dream=dream) or {0: 90})
+    monkeypatch.setattr(worker.db, "get_user_settings", lambda uid: {})
+    worker._apply_likeness(ss, [{"title": "Network Engineer"}])
+    assert "3 years of experience" in captured["dream"]
+    assert captured["dream"].startswith("network engineer at a bank")
+
+
+def test_alerts_create_stores_experience_years(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(app_module.db, "create_saved_search",
+                        lambda uid, rid, label, params, freq, nxt:
+                        captured.update(params=params) or 3)
+    resp = client.post("/alerts/create", data={
+        "resume_id": "3", "frequency": "daily", "experience_years": "3",
+        "work_type": "any", "country": "Canada", "keywords": "networking",
+    })
+    assert resp.status_code == 302
+    assert captured["params"]["experience_years"] == 3
+
+    # Blank → key omitted entirely (no experience filtering).
+    client.post("/alerts/create", data={
+        "resume_id": "3", "frequency": "daily", "experience_years": "",
+        "work_type": "any", "country": "Canada", "keywords": "networking",
+    })
+    assert "experience_years" not in captured["params"]
+
+
+def test_alerts_page_prefills_resume_experience(client, monkeypatch):
+    monkeypatch.setattr(app_module.db, "list_saved_searches", lambda uid: [])
+    monkeypatch.setattr(app_module.db, "list_resumes",
+                        lambda user_id=None, limit=100: [
+                            {"id": 3, "label": "Main", "upload_date": "2026-07-01"}])
+    resp = client.get("/alerts")
+    assert resp.status_code == 200
+    assert b'name="experience_years"' in resp.data
+    assert b"RESUME_YEARS" in resp.data
+    # PARSED has a current role since 2022-01 → a real estimate is embedded.
+    assert b'"3":' in resp.data
+
+
+# ---------------------------------------------------------------------------
 # OCR fallback (graceful when Tesseract/pytesseract absent)
 # ---------------------------------------------------------------------------
 def test_ocr_degrades_gracefully():
