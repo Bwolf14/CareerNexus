@@ -670,3 +670,58 @@ select:focus-visible, textarea:focus-visible, summary:focus-visible {
 /* Table rows warm slightly under the cursor (alerts, admin lists). */
 .tablewrap tbody tr:hover td { background: var(--orange-soft); }
 .exp-row input[type="range"] { accent-color: var(--orange); }
+
+/* ==========================================================================
+   Orange accent layer, round two — promoted from seasoning to co-star.
+   Primary CTAs, the brand mark, the stepper, and score displays go warm;
+   sky remains for links, secondary actions, and informational chrome.
+   ========================================================================== */
+:root { --on-orange: #2a1403; }
+
+/* Primary (big) call-to-action buttons: search, build plan, create alert… */
+.btn.big {
+  background: linear-gradient(135deg, var(--orange), var(--orange-strong));
+  border-color: var(--orange-strong);
+  color: var(--on-orange);
+  box-shadow: 0 6px 18px rgba(245, 158, 11, .22);
+}
+.btn.big:hover { filter: brightness(1.06); }
+:root[data-theme="light"] .btn.big {
+  color: #fff8f1;
+  box-shadow: 0 6px 16px rgba(234, 88, 12, .28);
+}
+
+/* Brand mark: sky → orange signature gradient. */
+.brand .logo { background: linear-gradient(135deg, var(--accent), var(--orange)); }
+
+/* The current step glows warm instead of sky. */
+.stepper li.active { background: var(--orange); border-color: var(--orange);
+                     color: var(--on-orange); }
+.stepper li.active .n { color: var(--on-orange); }
+:root[data-theme="light"] .stepper li.active { color: #fff8f1; }
+:root[data-theme="light"] .stepper li.active .n { color: #fff8f1; }
+
+/* Section headings inside cards get a small warm tick. */
+.card > h2::before {
+  content: ""; display: inline-block; width: .5rem; height: .5rem;
+  border-radius: 3px; margin-right: .55rem; vertical-align: baseline;
+  background: linear-gradient(135deg, var(--orange), var(--orange-strong));
+}
+
+/* Match scores + their bars read orange now (they sit beside the orange
+   top-pick highlight anyway). */
+.scorebox .num { color: var(--orange); }
+.scorebar > i { background: linear-gradient(90deg, var(--orange-strong), var(--orange)); }
+
+/* Focused inputs and hovered ghost buttons warm up. */
+input:focus, select:focus, textarea:focus { border-color: var(--orange); }
+.btn.ghost:hover { border-color: var(--orange); color: var(--text); }
+
+/* Link hover shifts warm (links stay sky at rest). */
+a:hover { color: var(--orange); }
+
+/* Job rows on the matches list warm on hover. */
+.job:hover { border-color: var(--orange); }
+
+/* Search-term pills get a warm border tint. */
+.pill { border-color: rgba(251, 146, 60, .35); }
