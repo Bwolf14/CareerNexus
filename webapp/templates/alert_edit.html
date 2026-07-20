@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Edit alert — Career Nexus{% endblock %}
+
+{% block content %}
+  <h1>Edit alert</h1>
+  <p class="sub">Change any part of this saved search. The schedule and paused/active
+     state are kept as they are — only what you edit below changes.</p>
+
+  <div class="card">
+    {% if resumes %}
+    <form method="post" action="{{ url_for('alerts_edit', saved_search_id=alert.id) }}">
+      {% include "_alert_form.html" %}
+      <div class="actions">
+        <button class="btn big" type="submit">Save changes →</button>
+        <a class="btn ghost" href="{{ url_for('alerts_page') }}">Cancel</a>
+      </div>
+    </form>
+    {% else %}
+      <p class="empty">You have no resumes to base this alert on. Upload one first.</p>
+      <div class="actions"><a class="btn" href="/">Upload a resume</a></div>
+    {% endif %}
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script>window.RESUME_YEARS = {{ (resume_years or {}) | tojson }};</script>
+<script src="{{ url_for('static', filename='alerts.js') }}"></script>
+{% endblock %}

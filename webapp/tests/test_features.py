@@ -970,6 +970,77 @@ def test_alerts_page_prefills_resume_experience(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Editing an existing alert
+# ---------------------------------------------------------------------------
+SAVED_SEARCH = {
+    "id": 5, "user_id": 1, "resume_id": 3, "label": "Bank roles",
+    "frequency": "weekly", "active": 1, "last_search_id": None,
+    "params": {
+        "keywords": ["rbc", "network engineer", "engineer"],
+        "user_keywords": ["network engineer"],
+        "location": "Calgary", "work_type": "any", "country": "Canada",
+        "sites": ["indeed"], "depth": "standard", "use_corpus": True,
+        "dream_description": "network engineering at a bank",
+        "likeness_threshold": 80, "filter_company": "RBC",
+        "experience_years": 4,
+    },
+}
+
+
+def _edit_stubs(monkeypatch):
+    monkeypatch.setattr(app_module.db, "get_saved_search",
+                        lambda sid: dict(SAVED_SEARCH) if sid == 5 else None)
+    monkeypatch.setattr(app_module.db, "list_resumes",
+                        lambda user_id=None, limit=100: [
+                            {"id": 3, "label": "Main", "upload_date": "2026-07-01"}])
+
+
+def test_alerts_edit_page_prefills_from_saved(client, monkeypatch):
+    _edit_stubs(monkeypatch)
+    resp = client.get("/alerts/5/edit")
+    assert resp.status_code == 200
+    assert b"Bank roles" in resp.data                 # label
+    assert b"network engineering at a bank" in resp.data   # dream
+    assert b"RBC" in resp.data                        # company filter
+    # The keyword box shows the user's typed keywords, not the merged set.
+    assert b'value="network engineer"' in resp.data
+    assert b"rbc, network engineer" not in resp.data
+    # Experience pre-filled, weekly selected.
+    assert b'value="4"' in resp.data
+
+
+def test_alerts_edit_saves_changes(client, monkeypatch):
+    _edit_stubs(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(app_module.db, "update_saved_search",
+                        lambda uid, sid, label, rid, params, freq:
+                        captured.update(sid=sid, label=label, rid=rid,
+                                        params=params, freq=freq) or True)
+    resp = client.post("/alerts/5/edit", data={
+        "resume_id": "3", "label": "Renamed", "frequency": "daily",
+        "dream_description": "network engineering at a bank",
+        "likeness_threshold": "60", "filter_company": "RBC",
+        "experience_years": "5", "work_type": "any", "country": "Canada",
+        "keywords": "network engineer",
+    })
+    assert resp.status_code == 302
+    assert "/alerts" in resp.headers["Location"]
+    assert captured["sid"] == 5
+    assert captured["label"] == "Renamed"
+    assert captured["freq"] == "daily"
+    assert captured["params"]["likeness_threshold"] == 60
+    assert captured["params"]["experience_years"] == 5
+    # user_keywords round-trips cleanly (no merged clutter re-merged).
+    assert captured["params"]["user_keywords"] == ["network engineer"]
+
+
+def test_alerts_edit_rejects_other_users_alert(client, monkeypatch):
+    other = dict(SAVED_SEARCH); other["user_id"] = 999
+    monkeypatch.setattr(app_module.db, "get_saved_search", lambda sid: other)
+    assert client.get("/alerts/5/edit").status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # OCR fallback (graceful when Tesseract/pytesseract absent)
 # ---------------------------------------------------------------------------
 def test_ocr_degrades_gracefully():

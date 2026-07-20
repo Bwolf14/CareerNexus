@@ -38,6 +38,7 @@ def build_queries(parsed: dict[str, Any], params: dict[str, Any]):
         parsed,
         location_override=params.get("location"),
         extra_keywords=params.get("keywords") or [],
+        exclude_terms=params.get("exclude_terms") or [],
     )
 
 

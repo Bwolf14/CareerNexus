@@ -72,11 +72,26 @@ def _looks_like_skill(value: str) -> bool:
     return len(value.split()) <= 4
 
 
+def resume_search_terms(parsed: dict[str, Any]) -> list[dict[str, str]]:
+    """The resume-derived search terms, for the user to review before searching.
+
+    Returns ``[{"term": str, "source": str}, ...]`` in the same order and with
+    the same de-duplication the scraper uses, but WITHOUT any user keywords or
+    location — just the terms this module would infer from the resume itself,
+    so the UI can show them and let the user drop ones that don't fit.
+    """
+    return [
+        {"term": q["search_term"], "source": q["source"]}
+        for q in build_queries_from_resume(parsed)
+    ]
+
+
 def build_queries_from_resume(
     parsed: dict[str, Any],
     *,
     location_override: Optional[str] = None,
     extra_keywords: Optional[list[str]] = None,
+    exclude_terms: Optional[list[str]] = None,
 ) -> list[dict[str, Any]]:
     """Build an ordered, de-duplicated list of search queries from a resume.
 
@@ -87,9 +102,13 @@ def build_queries_from_resume(
     ``location_override`` replaces the resume's location for every query (so a
     user can search Edmonton, all of Alberta, etc.). ``extra_keywords`` are the
     user's own search terms; they take priority over resume-derived ones.
+    ``exclude_terms`` are resume-derived terms the user reviewed and chose to
+    drop — matched case-insensitively, and only applied to inferred terms, so
+    an explicit keyword is never suppressed by it.
     """
     contact = parsed.get("contact_info") or {}
     location = _clean(location_override) or _clean(contact.get("location"))
+    excluded = {t.strip().lower() for t in (exclude_terms or []) if t and t.strip()}
 
     queries: list[dict[str, Any]] = []
     seen_terms: set[str] = set()
@@ -100,6 +119,10 @@ def build_queries_from_resume(
             return
         key = term.lower()
         if key in seen_terms:
+            return
+        # User keywords are explicit intent and always survive; only inferred
+        # terms can be dropped via the review checkboxes.
+        if source != "keyword" and key in excluded:
             return
         seen_terms.add(key)
         queries.append({"search_term": term, "location": location, "source": source})

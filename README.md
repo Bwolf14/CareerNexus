@@ -193,7 +193,16 @@ before exposing it). From the portal an admin can:
 * **Specific alert criteria** — a saved search can be narrowed to a company
   and/or a title substring (e.g. only *Google* postings containing
   *engineer*), so alerts fire for exactly what you're watching instead of
-  every new posting.
+  every new posting. Existing alerts are fully **editable** — the alerts page
+  has an *Edit* link that opens the same form pre-filled, so any field
+  (resume, dream description, filters, keywords, experience, threshold,
+  frequency) can be changed without deleting and recreating; the schedule and
+  paused/active state are preserved.
+* **Reviewable resume search terms** — the *Find matching jobs* step lists the
+  search terms it pulled from the resume (job titles + top skills) as
+  toggleable chips, so a user can untick any the parser got wrong before
+  searching. Unticked terms are dropped from the scrape; explicit extra
+  keywords are always kept.
 * **Bring-your-own internet AI** — a user can enter their own OpenAI or
   Anthropic API key (account page, behind a prominent privacy warning). When
   enabled, THEIR AI requests go to that provider instead of the local models,

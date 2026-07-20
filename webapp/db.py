@@ -1580,6 +1580,42 @@ def update_saved_search_params(
         conn.close()
 
 
+def update_saved_search(
+    user_id: int,
+    saved_search_id: int,
+    label: Optional[str],
+    resume_id: int,
+    params: dict[str, Any],
+    frequency: str,
+) -> bool:
+    """Replace an alert's editable fields (label, resume, params, frequency).
+
+    Owned rows only. Leaves the schedule (next_run_at), active flag, and
+    last-run pointers untouched, so editing an alert doesn't reset its cadence.
+    """
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE saved_searches
+                SET label = %s, resume_id = %s, params = %s, frequency = %s
+                WHERE id = %s AND user_id = %s
+                """,
+                ((label or None) and label[:255], resume_id, json.dumps(params),
+                 frequency, saved_search_id, user_id),
+            )
+            changed = cur.rowcount
+        conn.commit()
+        return changed > 0
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def set_saved_search_active(user_id: int, saved_search_id: int, active: bool) -> bool:
     conn = get_connection()
     try:

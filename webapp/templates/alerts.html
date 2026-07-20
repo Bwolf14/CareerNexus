@@ -52,6 +52,7 @@
               <td class="jobmeta">{{ s.last_run_at or '—' }}</td>
               <td class="jobmeta">{{ s.next_run_at or '—' }}</td>
               <td style="white-space:nowrap;">
+                <a href="{{ url_for('alerts_edit', saved_search_id=s.id) }}">Edit</a> ·
                 {% if s.last_search_id %}<a href="/matches/{{ s.last_search_id }}">Latest</a> · {% endif %}
                 <form method="post" action="{{ url_for('alerts_toggle', saved_search_id=s.id) }}" style="display:inline;">
                   <input type="hidden" name="active" value="{{ '0' if s.active else '1' }}" />
@@ -76,137 +77,7 @@
     <h2>New alert</h2>
     {% if resumes %}
     <form method="post" action="{{ url_for('alerts_create') }}">
-      <div class="formgrid">
-        <div class="row2">
-          <div>
-            <label class="field-label" for="resume_id">Resume</label>
-            <select id="resume_id" name="resume_id" required>
-              {% for r in resumes %}
-                <option value="{{ r.id }}">{{ r.label or 'Resume #' ~ r.id }} ({{ r.upload_date }})</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div>
-            <label class="field-label" for="label">Name <span class="opt">(optional)</span></label>
-            <input type="text" id="label" name="label" placeholder="e.g. Calgary electrician jobs" />
-          </div>
-        </div>
-
-        <div>
-          <label class="field-label" for="dream_description">Describe your dream job
-            <span class="opt">(optional, powers the AI matching)</span></label>
-          <textarea id="dream_description" name="dream_description" rows="3" maxlength="1500"
-                    placeholder="e.g. A hands-on network engineering role at a large Canadian bank in Calgary — a stable team, mentoring juniors, mostly on-site, working with Cisco gear."></textarea>
-          <div class="field-hint" style="color:var(--faint); font-size:.78rem; margin-top:.3rem;">
-            The AI pulls smart search keywords out of this, and every new posting is scored
-            0–100 for how close it is to this description — only postings above your
-            likeness threshold trigger the alert.</div>
-        </div>
-
-        <div>
-          <label class="field-label">Your experience — and the level of role to alert on</label>
-          <div class="exp-row" data-exp>
-            <input type="range" min="0" max="40" step="1" value="0"
-                   data-exp-slider aria-label="Years of experience" />
-            <div class="exp-value">
-              <input type="number" min="0" max="60" step="1" name="experience_years"
-                     id="alert-exp-years" value="" data-exp-num
-                     aria-label="Years of experience (exact)" />
-              <span class="exp-units">years</span>
-            </div>
-            <span class="badge ai exp-level" data-exp-level></span>
-          </div>
-          <div class="field-hint" style="color:var(--faint); font-size:.78rem; margin-top:.3rem;">
-            Auto-filled from the selected resume — correct it if it's off, or clear it to
-            skip experience filtering. This is a <strong>soft</strong> filter with wiggle
-            room: a "5+ years" posting still alerts someone with 3 (flagged as a stretch —
-            people land those). Only roles far beyond your level are skipped, so a
-            near-miss dream job never slips by silently.</div>
-        </div>
-
-        <div>
-          <label class="field-label" for="likeness_threshold">Likeness threshold:
-            <strong><span id="likeness-value">70</span></strong> / 100</label>
-          <input type="range" id="likeness_threshold" name="likeness_threshold"
-                 min="0" max="100" step="5" value="70" style="width:100%; max-width:420px;"
-                 oninput="document.getElementById('likeness-value').textContent = this.value" />
-          <div class="field-hint" style="color:var(--faint); font-size:.78rem; margin-top:.3rem;">
-            How close a posting must be to your dream job before you're alerted.
-            Higher = fewer, more precise alerts. Only applies when a dream job is described.</div>
-        </div>
-
-        <div class="row2">
-          <div>
-            <label class="field-label" for="filter_company">Only this company <span class="opt">(optional)</span></label>
-            <input type="text" id="filter_company" name="filter_company"
-                   placeholder="e.g. Google" />
-            <div class="field-hint" style="color:var(--faint); font-size:.78rem; margin-top:.3rem;">
-              The alert only fires for postings from this company.</div>
-          </div>
-          <div>
-            <label class="field-label" for="filter_title">Job title must contain <span class="opt">(optional)</span></label>
-            <input type="text" id="filter_title" name="filter_title"
-                   placeholder="e.g. software engineer" />
-            <div class="field-hint" style="color:var(--faint); font-size:.78rem; margin-top:.3rem;">
-              The alert only fires when the title contains this text.</div>
-          </div>
-        </div>
-        <div class="banner info" style="font-size:.85rem;">
-          <strong>Make it specific.</strong> Without filters a resume-driven search
-          matches many new postings every day, so the alert fires constantly. Add a
-          company and/or title filter to only hear about e.g. <em>Google</em> roles
-          containing <em>engineer</em>.
-        </div>
-
-        <div>
-          <label class="field-label" for="keywords">Extra keywords <span class="opt">(optional)</span></label>
-          <input type="text" id="keywords" name="keywords" placeholder="e.g. welding, pipefitter" />
-        </div>
-
-        <div class="row2">
-          <div>
-            <label class="field-label" for="location">Location <span class="opt">(optional)</span></label>
-            <input type="text" id="location" name="location" placeholder="Leave blank to use the resume" />
-          </div>
-          <div>
-            <label class="field-label" for="frequency">Frequency</label>
-            <select id="frequency" name="frequency">
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="row2">
-          <div>
-            <label class="field-label" for="country">Job board region</label>
-            <select id="country" name="country">
-              <option value="Canada" {{ 'selected' if default_country == 'Canada' else '' }}>🇨🇦 Canada</option>
-              <option value="USA" {{ 'selected' if default_country == 'USA' else '' }}>🇺🇸 United States</option>
-            </select>
-          </div>
-          <div>
-            <label class="field-label">Work type</label>
-            <div class="seg">
-              <label><input type="radio" name="work_type" value="any" checked /><span>Any</span></label>
-              <label><input type="radio" name="work_type" value="remote" /><span>Remote</span></label>
-              <label><input type="radio" name="work_type" value="local" /><span>On-site</span></label>
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <label class="field-label">Job boards</label>
-          <div class="checks">
-            {% for site in site_choices %}
-              <label><input type="checkbox" name="sites" value="{{ site.key }}"
-                     {{ 'checked' if site.key in default_sites else '' }} />
-                     <span>{{ site.label }}</span></label>
-            {% endfor %}
-          </div>
-        </div>
-      </div>
-
+      {% include "_alert_form.html" %}
       <div class="actions">
         <button class="btn big" type="submit">Create alert →</button>
       </div>
@@ -219,56 +90,6 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-  // Experience slider: sync range <-> number box <-> level label. Blank means
-  // "no experience filtering", so the label reflects that instead of a level.
-  // Level bands mirror job_matcher/experience.py.
-  const RESUME_YEARS = {{ (resume_years or {}) | tojson }};
-
-  document.querySelectorAll('[data-exp]').forEach(row => {
-    const slider = row.querySelector('[data-exp-slider]');
-    const num = row.querySelector('[data-exp-num]');
-    const label = row.querySelector('[data-exp-level]');
-    const levelFor = y => {
-      if (y <= 1) return 'Entry level';
-      if (y <= 4) return 'Junior / early career';
-      if (y <= 9) return 'Intermediate / senior';
-      if (y <= 14) return 'Senior / lead';
-      if (y <= 24) return 'Management / principal';
-      return 'Executive / senior leadership';
-    };
-    const paint = () => {
-      if (num.value === '') { label.textContent = 'no experience filter'; return; }
-      const y = parseInt(num.value, 10) || 0;
-      label.textContent = (y >= 40 ? '40+ yrs — ' : '') + levelFor(y);
-    };
-    slider.addEventListener('input', () => { num.value = slider.value; paint(); });
-    num.addEventListener('input', () => {
-      if (num.value !== '') {
-        const y = Math.max(0, Math.min(60, parseInt(num.value, 10) || 0));
-        slider.value = Math.min(y, 40);
-      }
-      paint();
-    });
-    paint();
-  });
-
-  // Pre-fill the experience control from the selected resume's estimate.
-  // Only auto-overwrite while the user hasn't typed their own number.
-  const resumeSel = document.getElementById('resume_id');
-  const expNum = document.getElementById('alert-exp-years');
-  if (resumeSel && expNum) {
-    let userEdited = false;
-    expNum.addEventListener('input', () => { userEdited = true; });
-    const fill = () => {
-      if (userEdited) return;
-      const est = RESUME_YEARS[resumeSel.value];
-      expNum.value = (est === undefined || est === null) ? '' : est;
-      expNum.dispatchEvent(new Event('input'));
-      userEdited = false;  // programmatic input above shouldn't count
-    };
-    resumeSel.addEventListener('change', fill);
-    fill();
-  }
-</script>
+<script>window.RESUME_YEARS = {{ (resume_years or {}) | tojson }};</script>
+<script src="{{ url_for('static', filename='alerts.js') }}"></script>
 {% endblock %}
