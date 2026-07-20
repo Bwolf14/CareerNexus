@@ -609,3 +609,64 @@ pre.json { background: var(--inset); border: 1px solid var(--border-soft); borde
 @media (max-width: 640px) {
   .exp-row { flex-wrap: wrap; }
 }
+
+/* ==========================================================================
+   Orange accent layer — subtle warm touches tying into the top-pick orange.
+   Sky stays the primary action colour; orange is seasoning, not the meal.
+   ========================================================================== */
+:root {
+  --orange: #fb923c;
+  --orange-strong: #f59e0b;
+  --orange-soft: rgba(251, 146, 60, .12);
+}
+:root[data-theme="light"] {
+  --orange: #ea580c;
+  --orange-strong: #d97706;
+  --orange-soft: rgba(234, 88, 12, .09);
+}
+
+/* A faint warm glow in the page background's bottom corner (both themes). */
+body {
+  background:
+    radial-gradient(1100px 500px at 85% -10%, rgba(56, 189, 248, 0.09), transparent 60%),
+    radial-gradient(900px 420px at -10% 0%, rgba(167, 139, 250, 0.07), transparent 55%),
+    radial-gradient(800px 380px at 100% 100%, rgba(251, 146, 60, 0.06), transparent 55%),
+    var(--bg);
+}
+:root[data-theme="light"] body {
+  background:
+    radial-gradient(1100px 500px at 85% -10%, rgba(2, 132, 199, 0.06), transparent 60%),
+    radial-gradient(900px 420px at -10% 0%, rgba(124, 58, 237, 0.05), transparent 55%),
+    radial-gradient(800px 380px at 100% 100%, rgba(234, 88, 12, 0.05), transparent 55%),
+    var(--bg);
+}
+
+/* Page titles get a short warm underline bar. */
+h1 { position: relative; padding-bottom: .55rem; }
+h1::after {
+  content: ""; position: absolute; left: 0; bottom: 0;
+  width: 46px; height: 3px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--orange-strong), var(--orange) 55%, transparent);
+}
+.hero h1::after { width: 64px; }
+
+/* Brand chip + stepper separators pick up the warmth. */
+.brand .tag { color: var(--orange); border-color: var(--orange-soft);
+              background: var(--orange-soft); }
+.stepper .sep { color: var(--orange); opacity: .75; }
+
+/* Sliders (experience, likeness threshold, matrix values) render orange —
+   they already sit next to orange top-pick styling on the career page. */
+input[type="range"] { accent-color: var(--orange); }
+
+/* Text selection + keyboard-focus ring get the same warm tint. */
+::selection { background: rgba(251, 146, 60, .30); }
+:root[data-theme="light"] ::selection { background: rgba(234, 88, 12, .22); }
+a:focus-visible, button:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--orange); outline-offset: 2px;
+}
+
+/* Table rows warm slightly under the cursor (alerts, admin lists). */
+.tablewrap tbody tr:hover td { background: var(--orange-soft); }
+.exp-row input[type="range"] { accent-color: var(--orange); }
