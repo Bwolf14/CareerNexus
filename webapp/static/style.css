@@ -725,3 +725,20 @@ a:hover { color: var(--orange); }
 
 /* Search-term pills get a warm border tint. */
 .pill { border-color: rgba(251, 146, 60, .35); }
+
+/* --- Resume search-term review (profile page) ----------------------------- */
+.term-review { display: flex; flex-wrap: wrap; gap: .5rem; margin: .15rem 0 .1rem; }
+.term-chip {
+  display: inline-flex; align-items: center; gap: .5rem; cursor: pointer;
+  padding: .4rem .7rem; border-radius: 999px; user-select: none;
+  border: 1px solid var(--border); background: var(--inset);
+  font-size: .88rem; transition: border-color .12s, background .12s, opacity .12s;
+}
+.term-chip input { margin: 0; accent-color: var(--orange); }
+.term-chip .term-text { font-weight: 600; }
+.term-chip .term-src { font-size: .72rem; color: var(--faint); text-transform: uppercase;
+                       letter-spacing: .04em; }
+.term-chip:has(input:checked) { border-color: var(--orange);
+                                background: var(--orange-soft); }
+.term-chip:has(input:not(:checked)) { opacity: .5; }
+.term-chip:has(input:not(:checked)) .term-text { text-decoration: line-through; }

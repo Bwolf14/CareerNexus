@@ -704,3 +704,53 @@ def test_recommendations_sends_up_to_top_n_picks_to_ai(client, ai_client_on, mon
     resp = client.get("/recommendations/7/ai")
     assert resp.status_code == 200
     assert seen["n_picks"] == app_module.AI_ANALYSIS_TOP_N == 50
+
+
+# ---------------------------------------------------------------------------
+# Resume search-term review on the profile form
+# ---------------------------------------------------------------------------
+def test_profile_lists_reviewable_resume_terms(client):
+    resp = client.get("/profile/3")
+    assert resp.status_code == 200
+    assert b'name="resume_terms"' in resp.data
+    assert b'name="offered_terms"' in resp.data
+    # PARSED has a current "Network Technician" role → offered as a term.
+    assert b"Network Technician" in resp.data
+
+
+def test_read_job_settings_computes_excluded_terms():
+    from werkzeug.datastructures import MultiDict
+
+    # Two terms offered; the user unticked "Help Desk" (kept only one).
+    form = MultiDict([
+        ("offered_terms", "Network Technician"),
+        ("offered_terms", "Help Desk"),
+        ("resume_terms", "Network Technician"),
+    ])
+    s = app_module._read_job_settings(form)
+    assert s["exclude_terms"] == ["Help Desk"]
+
+    # Nothing unticked → nothing excluded.
+    form = MultiDict([
+        ("offered_terms", "Network Technician"),
+        ("resume_terms", "Network Technician"),
+    ])
+    assert app_module._read_job_settings(form)["exclude_terms"] == []
+
+
+def test_excluded_term_reaches_the_scraper(client, monkeypatch):
+    monkeypatch.setenv("SCRAPE_ASYNC", "0")
+    seen = {}
+
+    def fake_scrape(queries, **kw):
+        seen["terms"] = [q["search_term"] for q in queries]
+        return {"jobs": list(JOBS), "source": "jobspy",
+                "sites": ["indeed"], "errors": []}
+
+    monkeypatch.setattr(app_module.search_service, "scrape_jobs_for_queries", fake_scrape)
+    monkeypatch.setattr(app_module.db, "search_corpus", lambda *a, **kw: [])
+    client.post("/profile/3/search", data={
+        "work_type": "any", "country": "Canada",
+        "offered_terms": "Network Technician",  # offered but NOT kept → excluded
+    })
+    assert "Network Technician" not in seen["terms"]

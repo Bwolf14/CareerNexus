@@ -22,7 +22,7 @@ Typical use::
 from __future__ import annotations
 
 from .output import write_results_json
-from .queries import build_queries_from_resume
+from .queries import build_queries_from_resume, resume_search_terms
 from .scraper import (
     DEFAULT_DEPTH,
     DEFAULT_SITES,
@@ -35,6 +35,7 @@ from .scraper import (
 
 __all__ = [
     "build_queries_from_resume",
+    "resume_search_terms",
     "scrape_jobs_for_queries",
     "write_results_json",
     "dedupe_cross_board",

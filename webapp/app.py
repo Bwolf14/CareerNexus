@@ -76,7 +76,13 @@ from job_matcher import (
     tailor_for_job,
 )
 from job_matcher.experience import estimate_experience_years
-from job_scraper import DEFAULT_DEPTH, DEFAULT_SITES, DEPTH_PRESETS, dedupe_cross_board
+from job_scraper import (
+    DEFAULT_DEPTH,
+    DEFAULT_SITES,
+    DEPTH_PRESETS,
+    dedupe_cross_board,
+    resume_search_terms,
+)
 from job_scraper.output import build_payload
 from job_scraper.scraper import COUNTRY_INDEED
 from resume_parser import parse_resume
@@ -211,6 +217,13 @@ def _read_job_settings(form) -> dict:
     if "use_corpus" in form:
         use_corpus = "1" in form.getlist("use_corpus")
 
+    # Resume-keyword review: each offered term ships a hidden "offered_terms"
+    # field and (when kept) a checked "resume_terms" checkbox. Anything offered
+    # but no longer checked is a term the user chose to drop from the search.
+    offered = form.getlist("offered_terms")
+    kept = {t for t in form.getlist("resume_terms")}
+    exclude_terms = [t for t in offered if t not in kept]
+
     return {
         "keywords": keywords,
         "location": location,
@@ -219,6 +232,7 @@ def _read_job_settings(form) -> dict:
         "sites": sites,
         "depth": depth,
         "use_corpus": use_corpus,
+        "exclude_terms": exclude_terms,
     }
 
 
@@ -754,6 +768,7 @@ def profile(resume_id: int):
         default_country=_default_country(),
         depth_choices=DEPTH_CHOICES,
         default_depth=_default_depth(),
+        resume_terms=resume_search_terms(parsed),
         **_step_urls(resume_id=resume_id),
     )
 
@@ -1610,25 +1625,27 @@ def alerts_page():
     )
 
 
-@app.route("/alerts/create", methods=["POST"])
-@login_required
-def alerts_create():
-    resume_id = request.form.get("resume_id", type=int)
-    if not resume_id:
-        flash("Choose a resume to base the alert on.", "error")
-        return redirect(url_for("alerts_page"))
-    _require_owned_resume(resume_id)
+def _build_alert_params(form) -> dict:
+    """Assemble a saved-search params dict from the alert form.
 
-    params = _read_job_settings(request.form)
+    Shared by create and edit so both stay identical: job settings + dream
+    description (with AI keyword extraction) + likeness threshold + experience
+    + company/title criteria, all merged into one params blob.
+    """
+    params = _read_job_settings(form)
+    # Keep the user's own typed keywords separate from the ones we merge in
+    # (dream/company/title), so editing the alert repopulates only what they
+    # typed and re-saving stays idempotent.
+    params["user_keywords"] = list(params["keywords"])
 
     # Dream-job description → AI-extracted search keywords + likeness scoring.
-    dream = (request.form.get("dream_description") or "").strip()[:1500]
+    dream = (form.get("dream_description") or "").strip()[:1500]
     if dream:
         params["dream_description"] = dream
         try:
             dream_keywords = extract_dream_keywords(_ai_config(), dream)
         except Exception:
-            # No model reachable: naive fallback so creation never blocks —
+            # No model reachable: naive fallback so saving never blocks —
             # longest distinctive words stand in for real keyword extraction.
             words = [w.strip(".,!?()").lower() for w in dream.split()]
             seen: list[str] = []
@@ -1641,7 +1658,7 @@ def alerts_create():
         params["keywords"] = (merged + params["keywords"])[:6]
         params["dream_keywords"] = dream_keywords
     try:
-        threshold = int(request.form.get("likeness_threshold") or 70)
+        threshold = int(form.get("likeness_threshold") or 70)
     except ValueError:
         threshold = 70
     params["likeness_threshold"] = max(0, min(100, threshold))
@@ -1649,7 +1666,7 @@ def alerts_create():
     # Years of experience (pre-filled from the resume, user-correctable).
     # The worker uses it as a SOFT seniority gate with wiggle room — a "5+
     # years" posting still alerts someone with 3, flagged as a stretch.
-    exp_raw = (request.form.get("experience_years") or "").strip()
+    exp_raw = (form.get("experience_years") or "").strip()
     if exp_raw:
         try:
             params["experience_years"] = max(0, min(60, int(float(exp_raw))))
@@ -1659,8 +1676,8 @@ def alerts_create():
     # Specific alert criteria: only postings matching these fire the alert
     # (e.g. company "Google" + title contains "engineer"). The company is also
     # added as a search keyword so the scrape actually looks for it.
-    filter_company = (request.form.get("filter_company") or "").strip()[:120]
-    filter_title = (request.form.get("filter_title") or "").strip()[:120]
+    filter_company = (form.get("filter_company") or "").strip()[:120]
+    filter_title = (form.get("filter_title") or "").strip()[:120]
     if filter_company:
         params["filter_company"] = filter_company
         if filter_company.lower() not in [k.lower() for k in params["keywords"]]:
@@ -1670,6 +1687,19 @@ def alerts_create():
         if filter_title.lower() not in [k.lower() for k in params["keywords"]]:
             params["keywords"] = params["keywords"] + [filter_title]
 
+    return params
+
+
+@app.route("/alerts/create", methods=["POST"])
+@login_required
+def alerts_create():
+    resume_id = request.form.get("resume_id", type=int)
+    if not resume_id:
+        flash("Choose a resume to base the alert on.", "error")
+        return redirect(url_for("alerts_page"))
+    _require_owned_resume(resume_id)
+
+    params = _build_alert_params(request.form)
     label = (request.form.get("label") or "").strip() or None
     frequency = (request.form.get("frequency") or "daily").strip().lower()
     if frequency not in ALERT_FREQUENCIES:
@@ -1685,6 +1715,55 @@ def alerts_create():
     except Exception as exc:
         flash(f"Could not save that alert: {exc}", "error")
     return redirect(url_for("alerts_page"))
+
+
+@app.route("/alerts/<int:saved_search_id>/edit", methods=["GET", "POST"])
+@login_required
+def alerts_edit(saved_search_id: int):
+    """View/save changes to an existing alert (owned rows only)."""
+    uid = current_user()["id"]
+    ss = db.get_saved_search(saved_search_id)
+    if not ss or ss.get("user_id") != uid:
+        abort(404, description="No alert of yours with that id.")
+
+    if request.method == "POST":
+        resume_id = request.form.get("resume_id", type=int)
+        if not resume_id:
+            flash("Choose a resume to base the alert on.", "error")
+            return redirect(url_for("alerts_edit", saved_search_id=saved_search_id))
+        _require_owned_resume(resume_id)
+
+        params = _build_alert_params(request.form)
+        label = (request.form.get("label") or "").strip() or None
+        frequency = (request.form.get("frequency") or "daily").strip().lower()
+        if frequency not in ALERT_FREQUENCIES:
+            frequency = "daily"
+        try:
+            db.update_saved_search(uid, saved_search_id, label, resume_id,
+                                   params, frequency)
+            flash("Alert updated.", "info")
+        except Exception as exc:
+            flash(f"Could not update that alert: {exc}", "error")
+        return redirect(url_for("alerts_page"))
+
+    resumes = db.list_resumes(user_id=uid)
+    resume_years: dict[int, int] = {}
+    for r in resumes:
+        try:
+            est = estimate_experience_years(db.get_resume_json(r["id"]) or {})
+        except Exception:
+            est = None
+        if est is not None:
+            resume_years[r["id"]] = est
+    return render_template(
+        "alert_edit.html",
+        alert=ss,
+        resumes=resumes,
+        resume_years=resume_years,
+        site_choices=SITE_CHOICES,
+        default_sites=DEFAULT_SITES,
+        default_country=_default_country(),
+    )
 
 
 @app.route("/alerts/<int:saved_search_id>/likeness", methods=["POST"])

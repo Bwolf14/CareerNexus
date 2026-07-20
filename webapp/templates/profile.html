@@ -168,11 +168,31 @@
        skills as search terms. Tune the search below — everything is optional.</p>
     <form id="search-form" action="/profile/{{ resume_id }}/search" method="post">
       <div class="formgrid">
+        {% if resume_terms %}
+        {% set src_label = {'current_title': 'current role', 'past_title': 'past role', 'skills': 'top skills'} %}
+        <div>
+          <label class="field-label">Search terms from your resume
+            <span class="opt">(untick any that don't fit)</span></label>
+          <div class="term-review">
+            {% for t in resume_terms %}
+              <label class="term-chip">
+                <input type="checkbox" name="resume_terms" value="{{ t.term }}" checked />
+                <input type="hidden" name="offered_terms" value="{{ t.term }}" />
+                <span class="term-text">{{ t.term }}</span>
+                <span class="term-src">{{ src_label.get(t.source, t.source) }}</span>
+              </label>
+            {% endfor %}
+          </div>
+          <div class="hint">These were pulled from your job titles and skills. Unticking one
+            drops it from the search — useful when the resume parser grabbed something that
+            isn't really the kind of work you want.</div>
+        </div>
+        {% endif %}
         <div class="row2">
           <div>
             <label class="field-label" for="keywords">Extra keywords <span class="opt">(optional, comma-separated)</span></label>
             <input type="text" id="keywords" name="keywords" placeholder="e.g. cloud, help desk, cybersecurity" />
-            <div class="hint">Searched in addition to the titles from your resume.</div>
+            <div class="hint">Searched in addition to the terms above.</div>
           </div>
           <div>
             <label class="field-label" for="location">Location <span class="opt">(optional)</span></label>
