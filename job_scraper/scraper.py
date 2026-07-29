@@ -24,14 +24,24 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional
 
-# Boards to scrape. Indeed, ZipRecruiter, and Glassdoor all work without proxies
-# and cover Canada/US well, so they're the default trio. LinkedIn needs rotating
-# proxies and Google Jobs needs a separate query format, so neither is included
-# by default — override with JOB_SITES (e.g. "indeed" alone for a faster demo).
+# Boards to scrape by default. Indeed and LinkedIn currently work without
+# proxies; ZipRecruiter and Glassdoor sit behind Cloudflare/anti-bot WAFs that
+# 403 scraper traffic outright (JobSpy issues #302/#270), so they're selectable
+# in the UI but no longer defaults — enabling them without proxies just wastes
+# a round-trip. Override with JOB_SITES; see JOB_PROXIES below for the only
+# workaround those boards respect.
 DEFAULT_SITES = [
     s.strip()
-    for s in os.environ.get("JOB_SITES", "indeed,zip_recruiter,glassdoor").split(",")
+    for s in os.environ.get("JOB_SITES", "indeed,linkedin").split(",")
     if s.strip()
+]
+
+# Optional rotating proxies, comma-separated ("user:pass@host:port" or full
+# URLs). Passed straight to JobSpy, which round-robins them per request. This
+# is the only realistic way to get ZipRecruiter/Glassdoor (and heavy LinkedIn
+# use) past their bot walls.
+PROXIES = [
+    p.strip() for p in os.environ.get("JOB_PROXIES", "").split(",") if p.strip()
 ]
 
 # Per-query knobs, env-overridable for tuning the demo.
@@ -350,6 +360,9 @@ def scrape_jobs_for_queries(
     if _scrape is not None and queries:
 
         def _run_query(query: dict[str, Any]) -> list[dict[str, Any]]:
+            kwargs: dict[str, Any] = {}
+            if PROXIES:
+                kwargs["proxies"] = PROXIES
             df = _scrape(
                 site_name=sites,
                 search_term=query["search_term"],
@@ -357,6 +370,7 @@ def scrape_jobs_for_queries(
                 results_wanted=fetch_wanted,
                 hours_old=hours_old,
                 country_indeed=country_indeed,
+                **kwargs,
             )
             if df is None or not len(df):
                 return []
@@ -388,6 +402,24 @@ def scrape_jobs_for_queries(
                 collected.extend(per_query[i] or [])
 
     jobs = _apply_remote_filter(_dedup(collected), remote_preference)
+
+    # A blocked board doesn't raise — JobSpy logs the 403 internally and just
+    # contributes zero rows — so without this note the UI claims "LIVE —
+    # indeed, zip_recruiter, glassdoor" while two of the three silently gave
+    # nothing. Name the boards that came back empty whenever others produced
+    # postings, so the user knows which are actually delivering.
+    if got_live and collected:
+        answered = {j.get("source_site") for j in collected}
+        silent = [s for s in sites if s not in answered]
+        if silent:
+            errors.append(
+                ", ".join(silent) + " returned no postings — these boards "
+                "block automated searches for most servers (Cloudflare anti-"
+                "bot); the results below are from the other board(s). Untick "
+                "them in the search form, or configure proxies (JOB_PROXIES) "
+                "to get past the block."
+            )
+
     if jobs:
         return {"jobs": jobs, "source": "jobspy", "sites": sites, "errors": errors}
 

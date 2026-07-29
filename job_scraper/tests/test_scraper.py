@@ -99,7 +99,7 @@ def test_queries_run_concurrently_and_results_keep_query_order(monkeypatch):
 
     _install_fake_jobspy(monkeypatch, fake_scrape)
     result = scrape_jobs_for_queries(
-        [{"search_term": "slow"}, {"search_term": "fast"}]
+        [{"search_term": "slow"}, {"search_term": "fast"}], sites=["indeed"]
     )
     assert result["source"] == "jobspy"
     assert [j["search_term"] for j in result["jobs"]] == ["slow", "fast"]
@@ -114,7 +114,7 @@ def test_one_failing_query_does_not_sink_the_run(monkeypatch):
 
     _install_fake_jobspy(monkeypatch, fake_scrape)
     result = scrape_jobs_for_queries(
-        [{"search_term": "bad"}, {"search_term": "good"}]
+        [{"search_term": "bad"}, {"search_term": "good"}], sites=["indeed"]
     )
     assert result["source"] == "jobspy"
     assert [j["search_term"] for j in result["jobs"]] == ["good"]
@@ -150,3 +150,60 @@ def test_all_queries_failing_falls_back_to_sample(monkeypatch):
     assert result["source"] == "sample"
     assert result["jobs"]  # placeholders present
     assert len(result["errors"]) == 1
+
+
+def test_silently_empty_boards_are_named(monkeypatch):
+    """A Cloudflare-blocked board doesn't raise — it just contributes zero
+    rows — so the result must say which requested boards gave nothing."""
+    def fake_scrape(**kw):
+        return FakeDF([_record(0, kw["search_term"])])  # everything from indeed
+
+    _install_fake_jobspy(monkeypatch, fake_scrape)
+    result = scrape_jobs_for_queries(
+        [{"search_term": "tech"}],
+        sites=["indeed", "zip_recruiter", "glassdoor"],
+    )
+    assert result["source"] == "jobspy"
+    note = next(e for e in result["errors"] if "returned no postings" in e)
+    assert "zip_recruiter" in note and "glassdoor" in note
+    assert "indeed" not in note.split(" returned")[0]
+
+
+def test_no_silent_board_note_when_all_deliver(monkeypatch):
+    def fake_scrape(**kw):
+        return FakeDF([_record(0, kw["search_term"])])
+
+    _install_fake_jobspy(monkeypatch, fake_scrape)
+    result = scrape_jobs_for_queries([{"search_term": "tech"}], sites=["indeed"])
+    assert not any("returned no postings" in e for e in result["errors"])
+
+
+def test_proxies_env_passed_to_jobspy(monkeypatch):
+    import job_scraper.scraper as scraper_mod
+    seen = {}
+
+    def fake_scrape(**kw):
+        seen.update(kw)
+        return FakeDF([_record(0, kw["search_term"])])
+
+    _install_fake_jobspy(monkeypatch, fake_scrape)
+    monkeypatch.setattr(scraper_mod, "PROXIES", ["user:pass@1.2.3.4:8080"])
+    scrape_jobs_for_queries([{"search_term": "tech"}], sites=["indeed"])
+    assert seen["proxies"] == ["user:pass@1.2.3.4:8080"]
+
+    # Without proxies configured the kwarg is omitted entirely.
+    monkeypatch.setattr(scraper_mod, "PROXIES", [])
+    seen.clear()
+    scrape_jobs_for_queries([{"search_term": "tech"}], sites=["indeed"])
+    assert "proxies" not in seen
+
+
+def test_default_sites_are_the_working_boards(monkeypatch):
+    import importlib
+    monkeypatch.delenv("JOB_SITES", raising=False)
+    import job_scraper.scraper as scraper_mod
+    reloaded = importlib.reload(scraper_mod)
+    try:
+        assert reloaded.DEFAULT_SITES == ["indeed", "linkedin"]
+    finally:
+        importlib.reload(scraper_mod)

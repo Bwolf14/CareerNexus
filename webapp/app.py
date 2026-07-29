@@ -114,9 +114,9 @@ COUNTRIES = {"Canada", "USA"}
 MAX_KEYWORDS = 4
 SITE_CHOICES = [
     {"key": "indeed", "label": "Indeed"},
-    {"key": "zip_recruiter", "label": "ZipRecruiter"},
-    {"key": "glassdoor", "label": "Glassdoor"},
     {"key": "linkedin", "label": "LinkedIn"},
+    {"key": "zip_recruiter", "label": "ZipRecruiter (usually blocked)"},
+    {"key": "glassdoor", "label": "Glassdoor (usually blocked)"},
 ]
 ALLOWED_SITES = {c["key"] for c in SITE_CHOICES}
 

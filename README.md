@@ -266,9 +266,10 @@ A search kicked off from the profile page will:
 1. pull **search terms** from the resume (current/recent job titles first,
    then top skills, plus any user keywords) —
    see [`job_scraper/queries.py`](job_scraper/queries.py),
-2. scrape matching postings with JobSpy (Indeed + ZipRecruiter + Glassdoor by
-   default; LinkedIn can be ticked on per-search in the UI), normalising each
-   to the `jobs` table shape — [`job_scraper/scraper.py`](job_scraper/scraper.py),
+2. scrape matching postings with JobSpy (Indeed + LinkedIn by default;
+   ZipRecruiter/Glassdoor can be ticked on per-search but are usually blocked —
+   see the boards note below), normalising each to the `jobs` table shape —
+   [`job_scraper/scraper.py`](job_scraper/scraper.py),
 3. store the run in **`job_searches`** and every posting in **`jobs`** (browsable
    in DBeaver, same database), and
 4. write a JSON file to `job_results/jobs_<id>.json` pairing the search context
@@ -280,7 +281,8 @@ works; the storage path is identical to a live run.
 
 | Env var                 | Default        | Purpose                                            |
 | ----------------------- | -------------- | -------------------------------------------------- |
-| `JOB_SITES`             | `indeed,zip_recruiter,glassdoor` | Comma-separated boards (set to `indeed` for a faster demo) |
+| `JOB_SITES`             | `indeed,linkedin` | Comma-separated default boards                  |
+| `JOB_PROXIES`           | *(unset)*      | Comma-separated rotating proxies (`user:pass@host:port`) passed to JobSpy — the only way past ZipRecruiter/Glassdoor's bot walls |
 | `JOB_COUNTRY`           | `Canada`       | Which country's Indeed site to search              |
 | `JOB_RESULTS_PER_QUERY` | `15`           | Postings per search term for the **Quick** preset (Standard = 50, Deep = 100) |
 | `JOB_HOURS_OLD`         | `168`          | Look-back hours for the **Quick** preset (Standard = 336, Deep = 720) |
@@ -292,12 +294,16 @@ works; the storage path is identical to a live run.
 > is set. It's `Canada` by default for this project; set it to `USA` (etc.) for
 > other regions.
 
-> **Note on boards:** Indeed, ZipRecruiter, and Glassdoor are the default trio —
-> all proxy-free and good for Canada/US. The same posting can appear on more than
-> one board (each is listed separately, tagged by `source_site`). Two boards are
-> *not* enabled by default: **LinkedIn** rate-limits hard and needs rotating
-> proxies, and **Google Jobs** needs a separate `google_search_term` query
-> format. ZipRecruiter only covers the US/Canada.
+> **Note on boards:** **Indeed and LinkedIn** are the working defaults.
+> **ZipRecruiter and Glassdoor** now sit behind Cloudflare/anti-bot WAFs that
+> return 403s to scraper traffic from most servers (upstream: JobSpy issues
+> [#302](https://github.com/speedyapply/JobSpy/issues/302) and
+> [#270](https://github.com/speedyapply/JobSpy/issues/270)) — they stay
+> selectable per-search, and a results-page note names any board that came back
+> empty, but without rotating proxies (`JOB_PROXIES`) they rarely deliver.
+> **Google Jobs** needs a separate `google_search_term` query format and isn't
+> wired up. The same posting can appear on more than one board (deduped
+> cross-board, tagged "also on …").
 
 ## Job matcher (the "AI" that isn't AI yet)
 
