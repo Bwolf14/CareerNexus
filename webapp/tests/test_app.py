@@ -161,6 +161,8 @@ def test_home_renders(client):
     resp = client.get("/")
     assert resp.status_code == 200
     assert b"Upload your resume" in resp.data
+    # The AI features shipped — no "coming soon" style tags should remain.
+    assert b"AI soon" not in resp.data
 
 
 def test_home_survives_db_outage(client, monkeypatch):
